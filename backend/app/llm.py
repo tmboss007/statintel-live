@@ -127,6 +127,37 @@ VERIFIED_LEARNING_SOURCES = {
 }
 
 
+def _call_groq_api(prompt: str, api_key: str) -> Optional[str]:
+    """Call Groq API with ultra-low latency for statistical career guidance."""
+    import httpx
+    model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are StatIntel's Senior Cadre Development Advisor for National Statistical Systems. Provide expert, grounded civil service guidance."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 1024
+    }
+    try:
+        resp = httpx.post(url, headers=headers, json=payload, timeout=6.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            choices = data.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "").strip()
+    except Exception as e:
+        print(f"Groq API invocation note: {e}")
+        return None
+    return None
+
+
 def _call_gemini_api(prompt: str, api_key: str) -> Optional[str]:
     """Call Google Gemini REST API."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
@@ -226,23 +257,36 @@ def generate_career_pathway(
 
     # Try Gemini API if available
     llm_narrative = None
-    if api_key:
-        prompt = f"""
-        You are StatIntel's Senior Cadre Development Advisor for National Statistical Systems.
-        Current Role: {role_name}
-        Target Progression: {target_role or 'Senior Specialization'}
-        Primary Skill Focus: {skill_focus or ', '.join(needed_skills)}
-        User Query: {user_query or 'Provide career transition pathway and learning recommendations'}
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    prompt = f"""
+    You are StatIntel's Senior Cadre Development Advisor for National Statistical Systems.
+    Current Role: {role_name}
+    Target Progression: {target_role or 'Senior Specialization'}
+    Primary Skill Focus: {skill_focus or ', '.join(needed_skills)}
+    User Query: {user_query or 'Provide career transition pathway and learning recommendations'}
 
-        Provide a concise, high-impact career progression plan formatted in clear Markdown:
-        1. Cadre Transition Overview: Key responsibilities difference and competency delta.
-        2. 12-Week Structured Learning Roadmap (Weeks 1-4, Weeks 5-8, Weeks 9-12) with practical official statistics project milestones.
-        3. Recommended Official Learning Sources and Institutional Standards.
-        Keep it professional, actionable, and strictly aligned with official civil service statistical cadres.
-        """
-        llm_narrative = _call_gemini_api(prompt, api_key)
+    Provide a concise, high-impact career progression plan formatted in clear Markdown:
+    1. Cadre Transition Overview: Key responsibilities difference and competency delta.
+    2. 12-Week Structured Learning Roadmap (Weeks 1-4, Weeks 5-8, Weeks 9-12) with practical official statistics project milestones.
+    3. Recommended Official Learning Sources and Institutional Standards.
+    Keep it professional, actionable, and strictly aligned with official civil service statistical cadres.
+    """
+    mode = "deterministic_cadre_ai"
 
-    # If LLM wasn't available or returned empty, generate deterministic high-accuracy expert guidance
+    # 1. Try ultra-fast Groq API
+    if groq_key and groq_key.lower() not in ("admin", "none", "changeme", "your-api-key"):
+        llm_narrative = _call_groq_api(prompt, groq_key)
+        if llm_narrative:
+            mode = "live_groq_ai"
+
+    # 2. Try Gemini API as fallback
+    if not llm_narrative and gemini_key and gemini_key.lower() not in ("admin", "none", "changeme", "your-api-key"):
+        llm_narrative = _call_gemini_api(prompt, gemini_key)
+        if llm_narrative:
+            mode = "live_gemini"
+
+    # 3. If LLM was unavailable or returned empty, generate deterministic high-accuracy expert guidance
     if not llm_narrative:
         llm_narrative = _generate_deterministic_pathway(
             role_name=role_name,
@@ -264,7 +308,7 @@ def generate_career_pathway(
             "Build an executive dashboard visualizing state/district level statistical indicators",
         ],
         "estimated_duration": "10–12 weeks (approx. 5 hours/week)",
-        "mode": "live_gemini" if api_key and llm_narrative else "deterministic_cadre_ai"
+        "mode": mode
     }
 
 

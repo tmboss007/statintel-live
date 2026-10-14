@@ -827,10 +827,42 @@ def generate_structured_roadmap(
 
 def _call_anthropic_api(system_prompt: str, user_prompt: str) -> Optional[str]:
     """
-    Call Anthropic Messages API or Google Gemini API if configured.
+    Call Groq (ultra-fast Llama/Qwen), Anthropic Messages API, or Google Gemini API if configured.
     Falls back immediately and gracefully to deterministic expert responses if no valid key is present.
     """
-    # 1. Check Anthropic key
+    # 1. Check Groq API (ultra-low latency ~500ms)
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key and groq_key.lower() not in ("admin", "changeme", "your-api-key", "none"):
+        groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": groq_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 1024
+        }
+        try:
+            resp = httpx.post(url, headers=headers, json=payload, timeout=6.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    content = choices[0].get("message", {}).get("content", "").strip()
+                    if content:
+                        return content
+            else:
+                logging.info(f"Groq API note ({resp.status_code}): {resp.text[:120]}")
+        except Exception as exc:
+            logging.info(f"Groq API call note: {exc}")
+
+    # 2. Check Anthropic key
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if api_key and api_key.lower() not in ("admin", "changeme", "your-api-key", "none"):
         base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
@@ -859,7 +891,7 @@ def _call_anthropic_api(system_prompt: str, user_prompt: str) -> Optional[str]:
         except Exception as exc:
             logging.info(f"Anthropic API call note: {exc}")
 
-    # 2. Check Gemini key as seamless alternative
+    # 3. Check Gemini key as seamless alternative
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     if gemini_key and gemini_key.lower() not in ("admin", "changeme", "your-api-key", "none"):
         try:
