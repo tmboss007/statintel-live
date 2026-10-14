@@ -26,7 +26,15 @@ from .pathway import (
     generate_structured_roadmap, execute_grounded_conversation, generate_pathway_pdf_dossier
 )
 
-FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
+FRONTEND_DIR = os.getenv("FRONTEND_DIR")
+if not FRONTEND_DIR or not os.path.isdir(FRONTEND_DIR):
+    _candidates = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend")),
+        os.path.abspath(os.path.join(os.getcwd(), "frontend")),
+        "/frontend",
+    ]
+    FRONTEND_DIR = next((p for p in _candidates if os.path.isdir(p)), _candidates[0])
 
 
 def _audit(db: Session, user: User | None, action: str, entity_type: str, entity_id: int | None = None, detail: str = ""):
@@ -135,10 +143,24 @@ app = FastAPI(
                 "individual officer readiness profiling. Seed records are illustrative, not official statistics.",
     lifespan=lifespan,
 )
-origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if x.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
-                   allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-                   allow_headers=["Authorization","Content-Type"])
+cors_env = os.getenv("CORS_ORIGINS", "*").strip()
+if cors_env == "*":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://.*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    origins = [x.strip() for x in cors_env.split(",") if x.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
 
 # ── Health ──────────────────────────────────────────────────────────────────
