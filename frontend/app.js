@@ -1421,15 +1421,17 @@ async function initPathwayPage() {
           const prompt = chip.dataset.pathwayPrompt;
           if (prompt) sendPathwayAdvisorMessage(prompt);
         };
+      });
+
       const clearBtn = $('clearChatBtn');
       if (clearBtn) clearBtn.onclick = () => clearPathwayChatHistory();
 
       pathwayInitialized = true;
-
       onPathwayOfficerChange();
     } else if (sel && !currentPathwayRoadmap) {
       onPathwayOfficerChange();
     }
+
   } catch (err) {
     console.error('Pathway init error:', err);
   }
@@ -1466,6 +1468,8 @@ function onPathwayOfficerChange() {
     } else {
       targetSel.selectedIndex = 0;
     }
+  }
+
   generatePathwayPlan();
   loadPathwayChatHistory(officerId);
 }
