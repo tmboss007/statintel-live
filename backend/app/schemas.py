@@ -104,3 +104,20 @@ class PathwayAccessGrantInput(BaseModel):
     weekly_hours: int = Field(default=4, ge=1, le=40)
     notes: Optional[str] = None
 
+
+class QuizRequest(BaseModel):
+    officer_id: int = Field(default=1)
+    skill_name: str = Field(min_length=1, max_length=180)
+    cadre_tier: str = Field(default="operational", max_length=50)
+    phase_order: int = Field(default=1, ge=1, le=10)
+
+
+class QuizSubmission(BaseModel):
+    officer_id: int
+    skill_name: str
+    cadre_tier: str = "operational"
+    phase_order: int = 1
+    target_role: Optional[str] = ""
+    answers: dict[str, int] = {}  # question_id (as str) -> selected_option_index
+
+

@@ -88,3 +88,34 @@ class AuditLog(Base):
     entity_id: Mapped[int] = mapped_column(Integer, nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AssessmentAttempt(Base):
+    __tablename__ = "assessment_attempts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    officer_id: Mapped[int] = mapped_column(ForeignKey("officers.id", ondelete="CASCADE"), index=True)
+    skill_name: Mapped[str] = mapped_column(String(180), index=True)
+    cadre_tier: Mapped[str] = mapped_column(String(50), default="operational")
+    phase_order: Mapped[int] = mapped_column(Integer, default=1)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    total_questions: Mapped[int] = mapped_column(Integer, default=5)
+    correct_answers: Mapped[int] = mapped_column(Integer, default=0)
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    officer: Mapped[Officer] = relationship()
+
+
+class Certificate(Base):
+    __tablename__ = "certificates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cert_uuid: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    officer_id: Mapped[int] = mapped_column(ForeignKey("officers.id", ondelete="CASCADE"), index=True)
+    officer_name: Mapped[str] = mapped_column(String(160))
+    skill_name: Mapped[str] = mapped_column(String(180), index=True)
+    cadre_tier: Mapped[str] = mapped_column(String(50), default="operational")
+    target_role: Mapped[str] = mapped_column(String(160), default="")
+    score: Mapped[float] = mapped_column(Float, default=100.0)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    officer: Mapped[Officer] = relationship()
+

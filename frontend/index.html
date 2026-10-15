@@ -721,8 +721,89 @@
   </form>
 </div>
 
+<!-- ═══════════ COMPETENCY ASSESSMENT QUIZ MODAL ═══════════ -->
+<div id="quizModalBack" class="modal-back hidden">
+  <div class="modal modal-lg" id="quizModal">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow" id="quizEyebrow">COMPETENCY VERIFICATION EXAMINATION • ISI & ESS STANDARDS</p>
+        <h2 id="quizSkillTitle">Skill Assessment</h2>
+        <div id="quizMetaBadges" style="margin-top:6px;display:flex;gap:8px;align-items:center"></div>
+      </div>
+      <button type="button" id="quizModalClose" class="icon-button">×</button>
+    </div>
+
+    <!-- Active Examination View -->
+    <div id="quizActiveView" class="modal-fields" style="padding:20px">
+      <div class="quiz-progress-bar-wrap" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:12px;color:var(--text-muted)">
+          <span id="quizStepIndicator">Question 1 of 5</span>
+          <span>Passing Threshold: 80% (4/5 Correct)</span>
+        </div>
+        <div class="quiz-track"><div id="quizTrackFill" class="quiz-track-fill" style="width:20%"></div></div>
+      </div>
+
+      <div id="quizQuestionContainer">
+        <!-- Injected via JS -->
+      </div>
+    </div>
+
+    <div id="quizActiveActions" class="modal-actions" style="justify-content:space-between">
+      <button type="button" class="secondary" id="quizPrevBtn" disabled>← Previous</button>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="secondary" id="quizCancelBtn">Exit</button>
+        <button type="button" class="primary" id="quizNextBtn">Next Question →</button>
+        <button type="button" class="primary hidden" id="quizSubmitBtn" style="background:var(--success);border-color:var(--success)">Submit Examination ✓</button>
+      </div>
+    </div>
+
+    <!-- Results & Certificate View -->
+    <div id="quizResultView" class="modal-fields hidden" style="padding:24px;max-height:70vh;overflow-y:auto">
+      <div id="quizResultBanner" class="quiz-result-card"></div>
+      <div id="quizExplanationsList" style="margin-top:20px"></div>
+    </div>
+
+    <div id="quizResultActions" class="modal-actions hidden" style="justify-content:flex-end;gap:12px">
+      <button type="button" class="secondary" id="quizCloseResultBtn">Close</button>
+      <button type="button" class="primary hidden" id="quizDownloadCertBtn" style="background:linear-gradient(135deg, #10B981, #059669);border:none;box-shadow:0 0 16px rgba(16,185,129,0.35)">
+        🎓 Download Official Certificate (PDF)
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ IN-APP VIDEO LECTURE MODAL ═══════════ -->
+<div id="videoModalBack" class="modal-back hidden">
+  <div class="modal modal-lg" id="videoModal" style="max-width:860px">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow" id="videoModalStandard">VERIFIED CURRICULUM LECTURE</p>
+        <h2 id="videoModalTitle" style="font-size:18px">—</h2>
+        <p id="videoModalMeta" style="font-size:12px;color:var(--text-muted);margin-top:4px">—</p>
+      </div>
+      <button type="button" id="videoModalClose" class="icon-button">×</button>
+    </div>
+    <div class="modal-fields" style="padding:16px">
+      <div class="video-responsive-wrap">
+        <iframe id="videoModalIframe" src="" title="Video Player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+      </div>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="videoMarkCompleteCheckbox" style="width:16px;height:16px;cursor:pointer">
+        <span>Mark this lecture as completed</span>
+      </label>
+      <div style="display:flex;gap:8px">
+        <a id="videoExternalLink" href="#" target="_blank" rel="noopener noreferrer" class="button secondary" style="text-decoration:none;font-size:13px">Open in YouTube ↗</a>
+        <button type="button" class="primary" id="videoCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ TOAST ═══════════ -->
 <div id="toast" class="toast"></div>
+
 
 <script src="/static/app.js?v=2.4"></script>
 </body>

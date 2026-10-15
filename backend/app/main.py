@@ -9,11 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from .database import Base, engine, get_db, SessionLocal
-from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog
+from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate
 from .schemas import (
     LoginInput, RegisterInput, UserUpdate, OfficerInput, SkillInput, RoleInput,
     CourseInput, CopilotInput, PathwayGenerateInput, PathwayConverseInput, PathwayPdfInput,
-    PathwayAccessGrantInput
+    PathwayAccessGrantInput, QuizRequest, QuizSubmission
 )
 from .security import hash_password, verify_password, create_token, current_user, require_admin
 from .analytics import (
@@ -25,6 +25,10 @@ from .llm import generate_career_pathway
 from .pathway import (
     generate_structured_roadmap, execute_grounded_conversation, generate_pathway_pdf_dossier
 )
+from .assessment import (
+    get_quiz_questions, evaluate_quiz_submission, generate_certificate_pdf
+)
+
 
 FRONTEND_DIR = os.getenv("FRONTEND_DIR")
 if not FRONTEND_DIR or not os.path.isdir(FRONTEND_DIR):
@@ -779,8 +783,100 @@ def pathway_list_grants(db: Session = Depends(get_db), admin: User = Depends(req
     ]
 
 
+# ── Competency Assessment & Certification Engine ───────────────────────────
+
+@app.get("/api/assessment/quiz")
+def assessment_get_quiz(
+    skill: str,
+    tier: str = "operational",
+    phase: int = 1,
+    officer_id: int = 1,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    return get_quiz_questions(skill_name=skill, cadre_tier=tier, phase_order=phase)
+
+
+@app.post("/api/assessment/submit")
+def assessment_submit(
+    payload: QuizSubmission,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    try:
+        result = evaluate_quiz_submission(
+            officer_id=payload.officer_id,
+            skill_name=payload.skill_name,
+            cadre_tier=payload.cadre_tier,
+            phase_order=payload.phase_order,
+            target_role=payload.target_role or "",
+            answers=payload.answers,
+            db=db
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Assessment evaluation failed: {e}")
+
+
+@app.get("/api/assessment/certificate/{cert_uuid}/verify")
+def certificate_verify(cert_uuid: str, db: Session = Depends(get_db)):
+    cert = db.scalar(select(Certificate).where(Certificate.cert_uuid == cert_uuid.strip()))
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found or invalid identifier")
+    return {
+        "status": "valid",
+        "certificate_id": cert.cert_uuid,
+        "officer_name": cert.officer_name,
+        "skill_name": cert.skill_name,
+        "cadre_tier": cert.cadre_tier,
+        "target_role": cert.target_role,
+        "examination_score": cert.score,
+        "issued_at": cert.issued_at.isoformat() if cert.issued_at else None,
+        "authenticity": "Verified by StatIntel National Cadre Registry"
+    }
+
+
+@app.get("/api/assessment/certificate/{cert_uuid}/pdf")
+def certificate_download_pdf(cert_uuid: str, db: Session = Depends(get_db)):
+    cert = db.scalar(select(Certificate).where(Certificate.cert_uuid == cert_uuid.strip()))
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found or invalid identifier")
+    officer = db.get(Officer, cert.officer_id)
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer record missing")
+    pdf_bytes = generate_certificate_pdf(cert, officer)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=StatIntel-Certificate-{cert.cert_uuid}.pdf"}
+    )
+
+
+@app.get("/api/assessment/certificates/officer/{officer_id}")
+def officer_certificates(officer_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    certs = db.scalars(
+        select(Certificate)
+        .where(Certificate.officer_id == officer_id)
+        .order_by(Certificate.issued_at.desc())
+    ).all()
+    return [
+        {
+            "id": c.id,
+            "cert_uuid": c.cert_uuid,
+            "skill_name": c.skill_name,
+            "cadre_tier": c.cadre_tier,
+            "target_role": c.target_role,
+            "score": c.score,
+            "issued_at": c.issued_at.isoformat() if c.issued_at else None
+        }
+        for c in certs
+    ]
+
 
 # ── Static files & SPA fallback ────────────────────────────────────────────
+
 
 @app.get("/", include_in_schema=False)
 def index():

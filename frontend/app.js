@@ -1486,6 +1486,14 @@ function renderPathwayDashboard(data) {
               <b>Official Practical Milestone:</b>
               ${esc(ph.milestone)}
             </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:12px 0 10px">
+              <button type="button" class="btn-phase-quiz" data-skill="${esc(ph.skill)}" data-order="${ph.order}" data-tier="${esc(data.cadre_tier || 'operational')}">
+                📝 Verify Competency & Take Phase Quiz
+              </button>
+              <div id="phaseCertBadge_${ph.order}"></div>
+            </div>
+
             <table class="phase-items-table">
               <thead>
                 <tr>
@@ -1493,7 +1501,7 @@ function renderPathwayDashboard(data) {
                   <th>Verified Module</th>
                   <th>Duration</th>
                   <th>Score</th>
-                  <th style="text-align:right">Direct Link</th>
+                  <th style="text-align:right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -1502,7 +1510,7 @@ function renderPathwayDashboard(data) {
         ph.items.forEach(it => {
           const isChecked = checkedPathwayItems.has(it.id);
           html += `
-            <tr class="${isChecked ? 'item-completed' : ''}">
+            <tr class="${isChecked ? 'item-completed' : ''}" id="row_${it.id}">
               <td style="text-align:center">
                 <input type="checkbox" class="phase-item-check" data-id="${it.id}" ${isChecked ? 'checked' : ''}>
               </td>
@@ -1512,9 +1520,12 @@ function renderPathwayDashboard(data) {
               </td>
               <td><span class="priority low">${it.duration_min} min</span></td>
               <td><span class="phase-score-badge">${it.score}</span></td>
-              <td style="text-align:right">
-                <a href="${esc(it.url)}" target="_blank" rel="noreferrer" class="source-link-btn">
-                  Watch &rarr;
+              <td style="text-align:right;white-space:nowrap">
+                <button type="button" class="btn-watch-lecture" data-vid="${esc(it.id)}" data-title="${esc(it.title)}" data-channel="${esc(it.channel)}" data-standard="${esc(it.verified_standard || 'Accredited')}">
+                  ▶ In-App Player
+                </button>
+                <a href="${esc(it.url)}" target="_blank" rel="noreferrer" class="source-link-btn" style="margin-left:4px">
+                  ↗
                 </a>
               </td>
             </tr>
@@ -1542,6 +1553,26 @@ function renderPathwayDashboard(data) {
           updatePathwayProgress();
         };
       });
+
+      // Bind Phase Quiz buttons
+      container.querySelectorAll('.btn-phase-quiz').forEach(btn => {
+        btn.onclick = () => {
+          const skill = btn.dataset.skill;
+          const order = parseInt(btn.dataset.order, 10);
+          const tier = btn.dataset.tier;
+          openCompetencyQuiz(skill, tier, order);
+        };
+      });
+
+      // Bind in-app video player buttons
+      container.querySelectorAll('.btn-watch-lecture').forEach(btn => {
+        btn.onclick = () => {
+          openVideoPlayer(btn.dataset.vid, btn.dataset.title, btn.dataset.channel, btn.dataset.standard);
+        };
+      });
+
+      // Load existing certificates for this officer
+      loadOfficerCertificates(data.officer_id);
     }
   }
 
@@ -1568,6 +1599,7 @@ function renderPathwayDashboard(data) {
 let currentPathwayVideos = [];
 
 function renderPathwayVideosList(videos) {
+
   const ytContainer = $('pathwayYtList');
   if (!ytContainer) return;
   if (!videos.length) {
@@ -1754,6 +1786,305 @@ async function downloadPathwayPdf() {
   }
 }
 
+// ── Competency Assessment & Certification Controller ─────────────────────
+let activeQuizData = null;
+let activeQuizAnswers = {};
+let activeQuizStep = 0;
+let lastEarnedCertUuid = null;
+let currentActiveVideoId = null;
+
+async function openCompetencyQuiz(skillName, cadreTier, phaseOrder) {
+  const sel = $('pathwayOfficerSelect');
+  const officerId = parseInt(sel?.value || '1', 10);
+  const officerList = (officers && officers.length) ? officers : FALLBACK_OFFICERS;
+  const off = officerList.find(o => o.id === officerId) || officerList[0];
+
+  try {
+    toast(`Loading Competency Examination for ${skillName}…`);
+    const data = await api(`/api/assessment/quiz?skill=${encodeURIComponent(skillName)}&tier=${encodeURIComponent(cadreTier)}&phase=${phaseOrder}&officer_id=${officerId}`);
+    
+    activeQuizData = { ...data, officerId, targetRole: off?.target_role || '' };
+    activeQuizAnswers = {};
+    activeQuizStep = 0;
+
+    // Setup modal headers
+    if ($('quizSkillTitle')) $('quizSkillTitle').textContent = `Phase ${phaseOrder}: ${skillName}`;
+    if ($('quizMetaBadges')) {
+      const tierBadge = `<span class="badge ${cadreTier === 'executive' ? 'badge-red' : cadreTier === 'senior' ? 'badge-blue' : 'badge-green'}" style="text-transform:uppercase">${cadreTier} Tier</span>`;
+      const officerBadge = `<span class="badge badge-gray">Candidate: ${esc(off?.name || 'Officer')}</span>`;
+      $('quizMetaBadges').innerHTML = `${tierBadge} ${officerBadge}`;
+    }
+
+    // Toggle views
+    $('quizActiveView')?.classList.remove('hidden');
+    $('quizActiveActions')?.classList.remove('hidden');
+    $('quizResultView')?.classList.add('hidden');
+    $('quizResultActions')?.classList.add('hidden');
+
+    renderQuizStep(0);
+    $('quizModalBack')?.classList.remove('hidden');
+  } catch (err) {
+    toast(`Assessment error: ${err.message}`);
+  }
+}
+
+function renderQuizStep(stepIndex) {
+  if (!activeQuizData || !activeQuizData.questions || !activeQuizData.questions.length) return;
+  activeQuizStep = Math.max(0, Math.min(stepIndex, activeQuizData.questions.length - 1));
+  const total = activeQuizData.questions.length;
+  const q = activeQuizData.questions[activeQuizStep];
+
+  // Update progress bar
+  if ($('quizStepIndicator')) $('quizStepIndicator').textContent = `Question ${activeQuizStep + 1} of ${total}`;
+  if ($('quizTrackFill')) $('quizTrackFill').style.width = `${Math.round(((activeQuizStep + 1) / total) * 100)}%`;
+
+  // Render question and options
+  const container = $('quizQuestionContainer');
+  if (container) {
+    const selected = activeQuizAnswers[String(q.id)];
+    let optionsHtml = '';
+    q.options.forEach((opt, idx) => {
+      const isSel = (selected === idx);
+      optionsHtml += `
+        <label class="quiz-option-card ${isSel ? 'selected' : ''}" onclick="selectQuizOption('${q.id}', ${idx})">
+          <input type="radio" name="quiz_opt_${q.id}" value="${idx}" ${isSel ? 'checked' : ''}>
+          <span>${esc(opt)}</span>
+        </label>
+      `;
+    });
+
+    container.innerHTML = `
+      <div class="quiz-question-box">
+        <div class="quiz-question-text">${activeQuizStep + 1}. ${esc(q.question)}</div>
+        <div class="quiz-options-group">
+          ${optionsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  // Button states
+  if ($('quizPrevBtn')) $('quizPrevBtn').disabled = (activeQuizStep === 0);
+  const isLast = (activeQuizStep === total - 1);
+  if ($('quizNextBtn')) $('quizNextBtn').classList.toggle('hidden', isLast);
+  if ($('quizSubmitBtn')) $('quizSubmitBtn').classList.toggle('hidden', !isLast);
+}
+
+function selectQuizOption(qid, optIndex) {
+  activeQuizAnswers[String(qid)] = optIndex;
+  renderQuizStep(activeQuizStep);
+}
+
+async function submitCompetencyQuiz() {
+  if (!activeQuizData) return;
+  const total = activeQuizData.questions.length;
+  const answered = Object.keys(activeQuizAnswers).length;
+  if (answered < total) {
+    if (!confirm(`You have answered ${answered} of ${total} questions. Submit anyway?`)) {
+      return;
+    }
+  }
+
+  try {
+    toast('Evaluating examination against official standards…');
+    const result = await api('/api/assessment/submit', {
+      method: 'POST',
+      body: {
+        officer_id: activeQuizData.officerId,
+        skill_name: activeQuizData.skill_name,
+        cadre_tier: activeQuizData.cadre_tier,
+        phase_order: activeQuizData.phase_order,
+        target_role: activeQuizData.targetRole,
+        answers: activeQuizAnswers
+      }
+    });
+
+    lastEarnedCertUuid = result.certificate_uuid;
+
+    // Hide active question view, show result view
+    $('quizActiveView')?.classList.add('hidden');
+    $('quizActiveActions')?.classList.add('hidden');
+    $('quizResultView')?.classList.remove('hidden');
+    $('quizResultActions')?.classList.remove('hidden');
+
+    const banner = $('quizResultBanner');
+    if (banner) {
+      if (result.passed) {
+        banner.className = 'quiz-result-card passed';
+        banner.innerHTML = `
+          <div class="quiz-score-circle">${result.score}%</div>
+          <h3 style="color:#065f46;font-size:20px;margin-bottom:6px">Verified Cadre Competency Approved! ✓</h3>
+          <p style="color:#047857;font-size:13px;max-width:520px;margin:0 auto">
+            Congratulations! You scored ${result.score}% (${result.correct_count}/${result.total_questions} correct), achieving the official standard.
+            <b>+${result.readiness_gain}% readiness uplift</b> has been credited to your official cadre profile.
+          </p>
+          <div style="margin-top:10px;font-size:11.5px;color:#065f46">
+            Official Credential Issued: <b>${result.certificate_uuid}</b>
+          </div>
+        `;
+        if ($('quizDownloadCertBtn')) {
+          $('quizDownloadCertBtn').classList.remove('hidden');
+          $('quizDownloadCertBtn').onclick = () => downloadCertificate(result.certificate_uuid);
+        }
+      } else {
+        banner.className = 'quiz-result-card failed';
+        banner.innerHTML = `
+          <div class="quiz-score-circle">${result.score}%</div>
+          <h3 style="color:#991b1b;font-size:20px;margin-bottom:6px">Examination Incomplete (${result.score}%)</h3>
+          <p style="color:#b91c1c;font-size:13px;max-width:520px;margin:0 auto">
+            Score achieved: ${result.score}% (${result.correct_count}/${result.total_questions} correct).
+            Passing threshold is 80%. Review the official rationales below and re-attempt when ready.
+          </p>
+        `;
+        if ($('quizDownloadCertBtn')) $('quizDownloadCertBtn').classList.add('hidden');
+      }
+    }
+
+    // Explanations list
+    const explList = $('quizExplanationsList');
+    if (explList && result.explanations) {
+      explList.innerHTML = `
+        <h4 style="font-size:13px;text-transform:uppercase;color:var(--text-muted);margin-bottom:12px">Detailed Methodological Review</h4>
+        ${result.explanations.map((exp, idx) => `
+          <div class="quiz-expl-item ${exp.is_correct ? 'is-correct' : 'is-incorrect'}">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <b>Question ${idx + 1}: ${esc(exp.question)}</b>
+              <span class="badge ${exp.is_correct ? 'badge-green' : 'badge-red'}">${exp.is_correct ? 'Correct ✓' : 'Incorrect ✗'}</span>
+            </div>
+            <div style="font-size:12px;color:var(--ink);margin-bottom:6px">
+              <b>Your Answer:</b> ${exp.selected_index !== null && exp.selected_index !== undefined ? esc(exp.options[exp.selected_index] || 'None') : '<em>Unanswered</em>'}
+            </div>
+            ${!exp.is_correct ? `<div style="font-size:12px;color:#059669;margin-bottom:6px"><b>Correct Answer:</b> ${esc(exp.options[exp.correct_index])}</div>` : ''}
+            <div style="font-size:11.5px;color:var(--text-muted);background:#f8fafc;padding:8px 10px;border-radius:4px;border:1px solid #e2e8f0">
+              <b>Methodological Rationale:</b> ${esc(exp.rationale)}
+            </div>
+          </div>
+        `).join('')}
+      `;
+    }
+
+    // Update officer readiness dynamically in memory and UI
+    if (result.passed) {
+      if ($('pathwayCurrentReadiness')) $('pathwayCurrentReadiness').textContent = `${result.new_readiness}%`;
+      const off = officers.find(o => o.id === result.officer_id);
+      if (off) off.readiness = result.new_readiness;
+      loadOfficerCertificates(result.officer_id);
+    }
+  } catch (err) {
+    toast(`Submission error: ${err.message}`);
+  }
+}
+
+async function downloadCertificate(certUuid) {
+  if (!certUuid) return;
+  try {
+    toast('Generating Official Vector PDF Certificate…');
+    const res = await fetch(`/api/assessment/certificate/${encodeURIComponent(certUuid)}/pdf`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error('Failed to generate certificate');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `StatIntel-Certificate-${certUuid}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Certificate downloaded successfully');
+  } catch (err) {
+    toast(`Certificate error: ${err.message}`);
+  }
+}
+
+async function loadOfficerCertificates(officerId) {
+  if (!officerId) return;
+  try {
+    const certs = await api(`/api/assessment/certificates/officer/${officerId}`);
+    if (certs && certs.length) {
+      certs.forEach(c => {
+        // Find matching phase cards or badge locations
+        document.querySelectorAll('.btn-phase-quiz').forEach(btn => {
+          if (btn.dataset.skill.toLowerCase() === c.skill_name.toLowerCase()) {
+            const badgeBox = $(`phaseCertBadge_${btn.dataset.order}`);
+            if (badgeBox) {
+              badgeBox.innerHTML = `
+                <button type="button" class="cert-badge-pill" onclick="downloadCertificate('${c.cert_uuid}')" title="Click to download certificate">
+                  🎓 Verified (${c.score}%) • ${c.cert_uuid}
+                </button>
+              `;
+            }
+          }
+        });
+      });
+    }
+  } catch (err) {
+    console.warn('Could not load officer certificates:', err);
+  }
+}
+
+// ── In-App Video Modal Controller ─────────────────────────────────────────
+function openVideoPlayer(videoId, title, channel, standard) {
+  currentActiveVideoId = videoId;
+  const modal = $('videoModalBack');
+  const iframe = $('videoModalIframe');
+  if (iframe) iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+  if ($('videoModalTitle')) $('videoModalTitle').textContent = title || 'Verified Video Lecture';
+  if ($('videoModalStandard')) $('videoModalStandard').textContent = standard || 'VERIFIED CURRICULUM LECTURE';
+  if ($('videoModalMeta')) $('videoModalMeta').textContent = `Channel: ${channel} • Quality Standard: ${standard}`;
+  
+  const chk = $('videoMarkCompleteCheckbox');
+  if (chk) {
+    chk.checked = checkedPathwayItems.has(videoId);
+    chk.onchange = () => {
+      if (chk.checked) {
+        checkedPathwayItems.add(videoId);
+      } else {
+        checkedPathwayItems.delete(videoId);
+      }
+      const tableRow = $(`row_${videoId}`);
+      if (tableRow) {
+        tableRow.classList.toggle('item-completed', chk.checked);
+        const itemChk = tableRow.querySelector('.phase-item-check');
+        if (itemChk) itemChk.checked = chk.checked;
+      }
+      updatePathwayProgress();
+    };
+  }
+
+  const extLink = $('videoExternalLink');
+  if (extLink) extLink.href = `https://www.youtube.com/watch?v=${videoId}`;
+
+  modal?.classList.remove('hidden');
+}
+
+function closeVideoPlayer() {
+  const iframe = $('videoModalIframe');
+  if (iframe) iframe.src = '';  // Stops video playback immediately
+  $('videoModalBack')?.classList.add('hidden');
+}
+
+// Wire Global Listeners for Quiz & Video Modals
+document.addEventListener('DOMContentLoaded', () => {
+  $('quizPrevBtn') && ($('quizPrevBtn').onclick = () => renderQuizStep(activeQuizStep - 1));
+  $('quizNextBtn') && ($('quizNextBtn').onclick = () => renderQuizStep(activeQuizStep + 1));
+  $('quizSubmitBtn') && ($('quizSubmitBtn').onclick = () => submitCompetencyQuiz());
+  $('quizModalClose') && ($('quizModalClose').onclick = () => $('quizModalBack')?.classList.add('hidden'));
+  $('quizCancelBtn') && ($('quizCancelBtn').onclick = () => $('quizModalBack')?.classList.add('hidden'));
+  $('quizCloseResultBtn') && ($('quizCloseResultBtn').onclick = () => $('quizModalBack')?.classList.add('hidden'));
+
+  $('videoModalClose') && ($('videoModalClose').onclick = closeVideoPlayer);
+  $('videoCloseBtn') && ($('videoCloseBtn').onclick = closeVideoPlayer);
+  
+  // Close modals on clicking backdrop
+  $('quizModalBack') && ($('quizModalBack').onclick = e => {
+    if (e.target === $('quizModalBack')) $('quizModalBack').classList.add('hidden');
+  });
+  $('videoModalBack') && ($('videoModalBack').onclick = e => {
+    if (e.target === $('videoModalBack')) closeVideoPlayer();
+  });
+});
+
 
 // ── Boot ───────────────────────────────────────────────────────────
 (async () => { if (token) await startApp(); })();
+
