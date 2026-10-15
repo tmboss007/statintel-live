@@ -127,6 +127,16 @@ async function startApp(targetPage = null) {
       if (toggleGrantBtn) toggleGrantBtn.classList.remove('hidden');
     }
 
+    const elevateBtn = $('elevateAdminBtn');
+    if (elevateBtn) {
+      if (currentUser.role === 'admin') {
+        elevateBtn.classList.add('hidden');
+      } else {
+        elevateBtn.classList.remove('hidden');
+        elevateBtn.onclick = () => openElevateModal();
+      }
+    }
+
     await refreshAll();
     await checkHealth();
 
@@ -1300,6 +1310,14 @@ async function initPathwayPage() {
           toggleGrantBtn.classList.remove('hidden');
           toggleGrantBtn.onclick = () => {
             grantPanel.classList.toggle('hidden');
+            const elevationBanner = $('grantAdminElevationBanner');
+            if (elevationBanner) {
+              if (currentUser && currentUser.role !== 'admin') {
+                elevationBanner.classList.remove('hidden');
+              } else {
+                elevationBanner.classList.add('hidden');
+              }
+            }
             if (!grantPanel.classList.contains('hidden') && grantOfficerSel) {
               grantOfficerSel.innerHTML = '<option value="">-- No linked officer profile (General study access) --</option>' +
                 officers.map(o => `<option value="${o.id}">${esc(o.name)} (${esc(o.department)})</option>`).join('');
@@ -1309,6 +1327,14 @@ async function initPathwayPage() {
       }
       if (closeGrantBtn && grantPanel) {
         closeGrantBtn.onclick = () => grantPanel.classList.add('hidden');
+      }
+
+      const promptElevateBtn = $('promptElevateAdminBtn');
+      if (promptElevateBtn) {
+        promptElevateBtn.onclick = () => openElevateModal(() => {
+          const elevationBanner = $('grantAdminElevationBanner');
+          if (elevationBanner) elevationBanner.classList.add('hidden');
+        });
       }
 
       const grantForm = $('pathwayGrantAccessForm');
@@ -1389,7 +1415,15 @@ async function initPathwayPage() {
             emailInput.value = '';
           } catch (err) {
             if (feedback) feedback.textContent = `Error: ${err.message}`;
-            toast(`Grant failed: ${err.message}`);
+            if (err.message && err.message.toLowerCase().includes('admin')) {
+              toast('Administrator authorization required. Opening elevation prompt…');
+              openElevateModal(async () => {
+                if (feedback) feedback.textContent = 'Retrying access grant with administrator privileges…';
+                grantForm.requestSubmit();
+              });
+            } else {
+              toast(`Grant failed: ${err.message}`);
+            }
           }
         };
       }
@@ -2192,7 +2226,30 @@ function closeVideoPlayer() {
   $('videoModalBack')?.classList.add('hidden');
 }
 
-// Wire Global Listeners for Quiz & Video Modals
+let onElevateSuccessCallback = null;
+
+function openElevateModal(callback = null) {
+  onElevateSuccessCallback = callback;
+  const back = $('elevateModalBack');
+  const targetLabel = $('elevateUserTarget');
+  const errEl = $('elevateError');
+  const passInp = $('elevateAdminPasswordInput');
+  if (errEl) errEl.textContent = '';
+  if (passInp) passInp.value = '';
+  if (targetLabel && currentUser) {
+    targetLabel.textContent = `${currentUser.full_name || currentUser.username} (@${currentUser.username})`;
+  }
+  if (back) back.classList.remove('hidden');
+  if (passInp) setTimeout(() => passInp.focus(), 50);
+}
+
+function closeElevateModal() {
+  const back = $('elevateModalBack');
+  if (back) back.classList.add('hidden');
+  onElevateSuccessCallback = null;
+}
+
+// Wire Global Listeners for Quiz, Video, & Elevation Modals
 document.addEventListener('DOMContentLoaded', () => {
   $('quizPrevBtn') && ($('quizPrevBtn').onclick = () => renderQuizStep(activeQuizStep - 1));
   $('quizNextBtn') && ($('quizNextBtn').onclick = () => renderQuizStep(activeQuizStep + 1));
@@ -2204,6 +2261,9 @@ document.addEventListener('DOMContentLoaded', () => {
   $('videoModalClose') && ($('videoModalClose').onclick = closeVideoPlayer);
   $('videoCloseBtn') && ($('videoCloseBtn').onclick = closeVideoPlayer);
   
+  $('elevateModalClose') && ($('elevateModalClose').onclick = closeElevateModal);
+  $('elevateCancelBtn') && ($('elevateCancelBtn').onclick = closeElevateModal);
+
   // Close modals on clicking backdrop
   $('quizModalBack') && ($('quizModalBack').onclick = e => {
     if (e.target === $('quizModalBack')) $('quizModalBack').classList.add('hidden');
@@ -2211,6 +2271,51 @@ document.addEventListener('DOMContentLoaded', () => {
   $('videoModalBack') && ($('videoModalBack').onclick = e => {
     if (e.target === $('videoModalBack')) closeVideoPlayer();
   });
+  $('elevateModalBack') && ($('elevateModalBack').onclick = e => {
+    if (e.target === $('elevateModalBack')) closeElevateModal();
+  });
+
+  const elevateForm = $('elevateAdminForm');
+  if (elevateForm) {
+    elevateForm.onsubmit = async e => {
+      e.preventDefault();
+      const passInp = $('elevateAdminPasswordInput');
+      const errEl = $('elevateError');
+      const pwd = passInp?.value || '';
+      if (!pwd) return;
+      if (errEl) errEl.textContent = 'Verifying administrator credentials…';
+      try {
+        const res = await api('/api/auth/elevate', {
+          method: 'POST',
+          body: { admin_password: pwd }
+        });
+        token = res.access_token;
+        localStorage.setItem('statintel_token', token);
+        currentUser.role = 'admin';
+
+        const displayName = currentUser.full_name || currentUser.username;
+        if ($('userLabel')) $('userLabel').textContent = displayName + ' · admin';
+        if ($('userRole')) $('userRole').textContent = 'admin';
+
+        const elevateBtn = $('elevateAdminBtn');
+        if (elevateBtn) elevateBtn.classList.add('hidden');
+        const banner = $('grantAdminElevationBanner');
+        if (banner) banner.classList.add('hidden');
+
+        toast('Account elevated to Administrator!');
+        closeElevateModal();
+
+        if (onElevateSuccessCallback) {
+          const cb = onElevateSuccessCallback;
+          onElevateSuccessCallback = null;
+          cb();
+        }
+      } catch (err) {
+        if (errEl) errEl.textContent = err.message || 'Elevation failed';
+        toast(`Elevation error: ${err.message}`);
+      }
+    };
+  }
 });
 
 

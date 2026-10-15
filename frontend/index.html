@@ -102,6 +102,7 @@
       </div>
       <div class="top-actions">
         <span class="demo-badge" id="demoBadge">DEMO DATA</span>
+        <button id="elevateAdminBtn" class="secondary hidden" style="font-size:11px;padding:3px 8px;border-color:var(--accent);color:var(--accent)" title="Elevate to Administrator">👑 Elevate to Admin</button>
         <span id="userLabel" class="user-label">Administrator</span>
         <button id="mobileNav" class="ghost mobile-only">☰</button>
       </div>
@@ -521,6 +522,19 @@
             <button type="button" id="closeGrantAccessBtn" class="icon-button" style="font-size:16px">×</button>
           </div>
           <div style="padding:16px">
+            <div id="grantAdminElevationBanner" class="hidden" style="margin-bottom:14px;padding:12px;background:rgba(217,119,6,0.08);border:1px solid #d97706;border-radius:6px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                  <b style="color:#b45309;font-size:12px">⚠️ Administrator Privileges Required</b>
+                  <p style="margin:2px 0 0 0;font-size:11px;color:var(--ink)">
+                    You are currently logged in as a <b>viewer</b>. Official officer access enrollment requires Administrator status.
+                  </p>
+                </div>
+                <button type="button" id="promptElevateAdminBtn" class="primary" style="white-space:nowrap;font-size:11px;padding:6px 12px">
+                  👑 Elevate to Admin Now
+                </button>
+              </div>
+            </div>
             <form id="pathwayGrantAccessForm" class="two-col gap-sm" style="align-items:flex-end">
               <div>
                 <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:4px">
@@ -830,10 +844,41 @@
   </div>
 </div>
 
+<!-- ═══════════ ELEVATE TO ADMIN MODAL ═══════════ -->
+<div id="elevateModalBack" class="modal-back hidden">
+  <div class="modal" id="elevateModal" style="max-width:440px">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow" style="color:var(--accent)">SECURITY PRIVILEGES &bull; CADRE GOVERNANCE</p>
+        <h2 style="font-size:18px">Elevate to Administrator</h2>
+        <p style="font-size:12px;color:var(--text-muted);margin-top:2px">Unlock authority functions including officer enrollment and dataset management.</p>
+      </div>
+      <button type="button" id="elevateModalClose" class="icon-button">×</button>
+    </div>
+    <form id="elevateAdminForm">
+      <div class="modal-fields" style="padding:16px">
+        <p style="font-size:12px;line-height:1.5;margin-bottom:12px;color:var(--ink)">
+          Enter the Master Administrator Password to elevate your account (<b id="elevateUserTarget">current user</b>) to full <b>Administrator</b> status:
+        </p>
+        <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:4px">
+          Administrator Master Password
+        </label>
+        <input type="password" id="elevateAdminPasswordInput" placeholder="Master Password (e.g. ChangeMe-Now-123!)" required style="width:100%;padding:8px 10px;font-size:13px">
+        <p id="elevateError" class="error" style="margin-top:8px;font-size:12px"></p>
+        <p class="muted" style="font-size:11px;margin-top:6px">Default evaluation passkey: <code>ChangeMe-Now-123!</code></p>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-end;gap:8px">
+        <button type="button" class="secondary" id="elevateCancelBtn">Cancel</button>
+        <button type="submit" class="primary" id="elevateSubmitBtn">👑 Confirm & Elevate Role</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- ═══════════ TOAST ═══════════ -->
 <div id="toast" class="toast"></div>
 
 
-<script src="/static/app.js?v=2.5"></script>
+<script src="/static/app.js?v=2.6"></script>
 </body>
 </html>

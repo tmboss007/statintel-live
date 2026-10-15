@@ -16,6 +16,9 @@ class UserUpdate(BaseModel):
     email: Optional[str] = Field(default=None, max_length=255)
     password: Optional[str] = Field(default=None, min_length=8, max_length=256)
 
+class ElevateInput(BaseModel):
+    admin_password: str = Field(min_length=1, max_length=256)
+
 class OfficerInput(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     department: str = Field(default="Not specified", max_length=180)

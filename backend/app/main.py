@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from .database import Base, engine, get_db, SessionLocal
 from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate, ConversationMessage
 from .schemas import (
-    LoginInput, RegisterInput, UserUpdate, OfficerInput, SkillInput, RoleInput,
+    LoginInput, RegisterInput, UserUpdate, ElevateInput, OfficerInput, SkillInput, RoleInput,
     CourseInput, CopilotInput, PathwayGenerateInput, PathwayConverseInput, PathwayPdfInput,
     PathwayAccessGrantInput, QuizRequest, QuizSubmission, ChatSendMessageInput
 )
@@ -268,6 +268,35 @@ def update_profile(payload: UserUpdate, db: Session = Depends(get_db), user: Use
         user.password_hash = hash_password(payload.password)
     db.commit()
     return {"ok": True, "username": user.username}
+
+
+@app.post("/api/auth/elevate")
+def elevate_role(payload: ElevateInput, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    expected_pwd = os.getenv("ADMIN_PASSWORD", "ChangeMe-Now-123!")
+    admin_user = db.scalar(select(User).where(User.username == os.getenv("ADMIN_USERNAME", "admin")))
+    valid = (payload.admin_password == expected_pwd)
+    if not valid and admin_user:
+        valid = verify_password(payload.admin_password, admin_user.password_hash)
+
+    if not valid:
+        raise HTTPException(status_code=403, detail="Invalid administrator authorization key or password")
+
+    user.role = "admin"
+    db.commit()
+    db.refresh(user)
+    _audit(db, user, "elevate_role", "users", user.id, f"User {user.username} elevated to admin")
+    new_token = create_token(user)
+    return {
+        "status": "success",
+        "message": f"Account '{user.username}' successfully elevated to Administrator role.",
+        "access_token": new_token,
+        "token_type": "bearer",
+        "role": user.role,
+        "username": user.username,
+        "full_name": user.full_name,
+        "officer_id": user.officer_id,
+        "email": user.email
+    }
 
 
 # ── Dashboard (enhanced) ───────────────────────────────────────────────────
