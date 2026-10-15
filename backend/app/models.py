@@ -13,9 +13,11 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(30), default="admin")
     full_name: Mapped[str] = mapped_column(String(160), default="")
     email: Mapped[str] = mapped_column(String(255), default="")
+    officer_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("officers.id", ondelete="SET NULL"), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    officer: Mapped["Officer | None"] = relationship(foreign_keys=[officer_id])
 
 class Officer(Base):
     __tablename__ = "officers"
@@ -32,9 +34,13 @@ class Officer(Base):
     assessment_date: Mapped[str] = mapped_column(String(40), default="")
     years_in_role: Mapped[int] = mapped_column(Integer, default=0)
     qualification: Mapped[str] = mapped_column(String(200), default="")
+    assigned_pathway: Mapped[str] = mapped_column(Text, default="")
+    assigned_by: Mapped[str] = mapped_column(String(80), default="")
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
 
 class Skill(Base):
     __tablename__ = "skills"
@@ -118,4 +124,16 @@ class Certificate(Base):
     score: Mapped[float] = mapped_column(Float, default=100.0)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     officer: Mapped[Officer] = relationship()
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    officer_id: Mapped[int] = mapped_column(ForeignKey("officers.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    sender: Mapped[str] = mapped_column(String(20))  # "user" or "advisor"
+    message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    officer: Mapped[Officer] = relationship()
+
 

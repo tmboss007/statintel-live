@@ -102,7 +102,17 @@ class PathwayAccessGrantInput(BaseModel):
     officer_id: Optional[int] = None
     target_role: Optional[str] = None
     weekly_hours: int = Field(default=4, ge=1, le=40)
+    preferred_style: str = Field(default="applied")
+    attach_current_roadmap: bool = Field(default=True)
+    roadmap: Optional[dict] = None
     notes: Optional[str] = None
+
+
+class ChatSendMessageInput(BaseModel):
+    officer_id: int
+    message: str = Field(min_length=1)
+    roadmap: Optional[dict] = None
+
 
 
 class QuizRequest(BaseModel):

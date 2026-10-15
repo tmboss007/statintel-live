@@ -1,4 +1,4 @@
-import csv, io, os, statistics
+import csv, io, json, os, statistics
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -9,12 +9,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from .database import Base, engine, get_db, SessionLocal
-from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate
+from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate, ConversationMessage
 from .schemas import (
     LoginInput, RegisterInput, UserUpdate, OfficerInput, SkillInput, RoleInput,
     CourseInput, CopilotInput, PathwayGenerateInput, PathwayConverseInput, PathwayPdfInput,
-    PathwayAccessGrantInput, QuizRequest, QuizSubmission
+    PathwayAccessGrantInput, QuizRequest, QuizSubmission, ChatSendMessageInput
 )
+
 from .security import hash_password, verify_password, create_token, current_user, require_admin
 from .analytics import (
     compute_workforce_analytics, compute_gap_severity, compute_competency_heatmap,
@@ -130,14 +131,37 @@ def seed(db: Session):
     db.commit()
 
 
+def ensure_schema_migrations(eng):
+    """Ensure newly added columns exist in existing database tables."""
+    from sqlalchemy import text
+    with eng.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN officer_id INTEGER"))
+            conn.commit()
+        except Exception:
+            pass
+        for col, col_type in [
+            ("assigned_pathway", "TEXT"),
+            ("assigned_by", "VARCHAR(80)"),
+            ("assigned_at", "TIMESTAMP WITH TIME ZONE")
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE officers ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_schema_migrations(engine)
     with SessionLocal() as db:
         ensure_admin(db)
         if os.getenv("SEED_DEMO_DATA", "true").lower() == "true":
             seed(db)
     yield
+
 
 app = FastAPI(
     title="StatIntel Workforce Intelligence API",
@@ -200,6 +224,7 @@ def login(payload: LoginInput, db: Session = Depends(get_db)):
     return {
         "access_token": create_token(user), "token_type": "bearer",
         "username": user.username, "role": user.role, "full_name": user.full_name,
+        "officer_id": user.officer_id, "email": user.email
     }
 
 
@@ -220,6 +245,7 @@ def register(payload: RegisterInput, db: Session = Depends(get_db)):
     return {
         "access_token": create_token(user), "token_type": "bearer",
         "username": user.username, "role": user.role, "full_name": user.full_name,
+        "officer_id": user.officer_id, "email": user.email
     }
 
 
@@ -227,8 +253,9 @@ def register(payload: RegisterInput, db: Session = Depends(get_db)):
 def me(user: User = Depends(current_user)):
     return {
         "id": user.id, "username": user.username, "role": user.role,
-        "full_name": user.full_name, "email": user.email,
+        "full_name": user.full_name, "email": user.email, "officer_id": user.officer_id
     }
+
 
 
 @app.patch("/api/auth/me")
@@ -734,19 +761,64 @@ def pathway_grant_access(payload: PathwayAccessGrantInput, db: Session = Depends
         db.refresh(user)
         username_created = candidate
 
-    # Detail logging for audit
+    # Link officer record to user account
+    if payload.officer_id:
+        user.officer_id = payload.officer_id
+        user.role = "officer"
+
+    # Detail logging & pathway sealing
     officer_name = "Cadre Development Profile"
+    target_role_name = payload.target_role or "Senior Cadre Progression"
+    off = None
     if payload.officer_id:
         off = db.get(Officer, payload.officer_id)
         if off:
             officer_name = off.name
+            target_role_name = payload.target_role or off.target_role
+            if payload.attach_current_roadmap and payload.roadmap:
+                off.assigned_pathway = json.dumps(payload.roadmap)
+                off.assigned_by = admin.username
+                off.assigned_at = datetime.now(timezone.utc)
+            elif payload.attach_current_roadmap and not off.assigned_pathway:
+                generated = generate_structured_roadmap(
+                    officer_id=off.id,
+                    target_role=target_role_name,
+                    weekly_hours=payload.weekly_hours,
+                    preferred_style=payload.preferred_style,
+                    content_level="operational",
+                    db=db
+                )
+                off.assigned_pathway = json.dumps(generated)
+                off.assigned_by = admin.username
+                off.assigned_at = datetime.now(timezone.utc)
 
-    detail_msg = f"Granted pathway study & planning access to {email}. Linked officer: {officer_name} (ID: {payload.officer_id}). Target role: {payload.target_role or 'Standard Progression'}."
+    detail_msg = f"Granted pathway access to {email}. Linked officer: {officer_name} (ID: {payload.officer_id}). Target role: {target_role_name}."
     if username_created:
         detail_msg += f" Created account: {username_created}."
 
     _audit(db, admin, "grant_access", "pathway", user.id, detail_msg)
     db.commit()
+
+    # Generate one-click direct access token
+    direct_token = create_token(user)
+    direct_login_url = f"/#autologin={direct_token}&page=pathway"
+
+    invitation_note = (
+        f"🏛️ OFFICIAL STATINTEL CADRE PATHWAY INVITATION\n"
+        f"---------------------------------------------------\n"
+        f"Officer: {officer_name}\n"
+        f"Email: {email}\n"
+        f"Target Cadre: {target_role_name}\n"
+        f"Authority Approved By: System Administrator ({admin.username})\n\n"
+        f"ACCOUNT CREDENTIALS:\n"
+        f"Username: {user.username}\n"
+        f"Password: {default_pwd or '[Existing Password]'}\n\n"
+        f"ONE-CLICK DIRECT ACCESS:\n"
+        f"{direct_login_url}\n"
+        f"---------------------------------------------------\n"
+        f"You have been granted official access to your personalized cadre progression pathway, "
+        f"verified curriculum lectures, competency verification examinations, and interactive cadre AI mentoring."
+    )
 
     return {
         "status": "success",
@@ -754,14 +826,148 @@ def pathway_grant_access(payload: PathwayAccessGrantInput, db: Session = Depends
         "email": email,
         "user_id": user.id,
         "username": user.username,
+        "officer_id": user.officer_id,
+        "officer_name": officer_name,
+        "target_role": target_role_name,
         "new_account_created": bool(username_created),
         "temporary_credentials": {
             "username": user.username,
             "temporary_password": default_pwd
         } if default_pwd else None,
+        "direct_access_url": direct_login_url,
+        "invitation_note": invitation_note,
+        "assigned_pathway_attached": bool(off and off.assigned_pathway),
         "access_scope": "Full access to Plan My Pathway learning curriculum, YouTube video catalog, progress tracking, and progression chat.",
         "granted_at": datetime.now(timezone.utc).isoformat()
     }
+
+
+@app.get("/api/pathway/my-pathway")
+def pathway_my_pathway(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Retrieve the logged in officer's assigned pathway."""
+    if not user.officer_id and user.email:
+        # Auto-match by email or full name if not explicitly set
+        candidate_off = db.scalar(select(Officer).where(func.lower(Officer.name) == func.lower(user.full_name)))
+        if candidate_off:
+            user.officer_id = candidate_off.id
+            db.commit()
+
+    if not user.officer_id:
+        return {"has_assigned": False, "officer": None, "roadmap": None}
+
+    off = db.get(Officer, user.officer_id)
+    if not off:
+        return {"has_assigned": False, "officer": None, "roadmap": None}
+
+    roadmap = None
+    if off.assigned_pathway:
+        try:
+            roadmap = json.loads(off.assigned_pathway)
+        except Exception:
+            roadmap = None
+
+    if not roadmap:
+        # Generate baseline roadmap on the fly
+        roadmap = generate_structured_roadmap(
+            officer_id=off.id,
+            target_role=off.target_role or "Senior Statistical Officer",
+            weekly_hours=4,
+            preferred_style="applied",
+            content_level="operational",
+            db=db
+        )
+        off.assigned_pathway = json.dumps(roadmap)
+        off.assigned_by = "System Auto-Provisioning"
+        off.assigned_at = datetime.now(timezone.utc)
+        db.commit()
+
+    return {
+        "has_assigned": True,
+        "officer": {
+            "id": off.id,
+            "name": off.name,
+            "department": off.department,
+            "current_role": off.current_role,
+            "target_role": off.target_role,
+            "readiness": off.readiness,
+            "open_gaps": off.open_gaps
+        },
+        "assigned_by": off.assigned_by or "Cadre Administration",
+        "assigned_at": off.assigned_at.isoformat() if off.assigned_at else None,
+        "roadmap": roadmap
+    }
+
+
+@app.get("/api/pathway/chat/history/{officer_id}")
+def pathway_get_chat_history(officer_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Retrieve past persistent conversational messages for an officer."""
+    messages = db.scalars(
+        select(ConversationMessage)
+        .where(ConversationMessage.officer_id == officer_id)
+        .order_by(ConversationMessage.created_at.asc())
+        .limit(50)
+    ).all()
+    return [
+        {
+            "id": m.id,
+            "sender": m.sender,
+            "message": m.message,
+            "created_at": m.created_at.isoformat() if m.created_at else None
+        }
+        for m in messages
+    ]
+
+
+@app.post("/api/pathway/chat/send")
+def pathway_chat_send(payload: ChatSendMessageInput, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Persistent grounded conversational advisory."""
+    # 1. Save user message
+    user_msg = ConversationMessage(
+        officer_id=payload.officer_id,
+        user_id=user.id,
+        sender="user",
+        message=payload.message,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(user_msg)
+    db.commit()
+
+    # 2. Execute conversation with advisor
+    advisor_res = execute_grounded_conversation(
+        current_roadmap=payload.roadmap or {},
+        user_message=payload.message,
+        db=db
+    )
+    reply_text = advisor_res.get("reply", "")
+
+    # 3. Save advisor response
+    advisor_msg = ConversationMessage(
+        officer_id=payload.officer_id,
+        user_id=None,
+        sender="advisor",
+        message=reply_text,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(advisor_msg)
+    db.commit()
+
+    return {
+        "status": "success",
+        "reply": reply_text,
+        "mode": advisor_res.get("mode", "grounded_catalog"),
+        "created_at": advisor_msg.created_at.isoformat()
+    }
+
+
+@app.delete("/api/pathway/chat/clear/{officer_id}")
+def pathway_chat_clear(officer_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Clear conversation history for this officer."""
+    messages = db.scalars(select(ConversationMessage).where(ConversationMessage.officer_id == officer_id)).all()
+    for m in messages:
+        db.delete(m)
+    db.commit()
+    return {"status": "cleared", "deleted_count": len(messages)}
+
 
 
 @app.get("/api/pathway/grants")

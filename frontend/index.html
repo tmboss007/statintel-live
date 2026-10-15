@@ -534,14 +534,39 @@
                 </label>
                 <select id="grantUserOfficerSelect" style="width:100%"></select>
               </div>
+              <div style="grid-column:1 / -1;margin-top:4px">
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink);cursor:pointer">
+                  <input type="checkbox" id="grantAttachRoadmap" checked style="width:15px;height:15px;accent-color:var(--accent)">
+                  <span><b>Seal & Attach Current Pathway:</b> Save the currently generated learning roadmap, milestones, and video catalog as the officer's official curriculum</span>
+                </label>
+              </div>
               <div style="grid-column:1 / -1;display:flex;gap:10px;align-items:center;margin-top:6px">
                 <button type="submit" class="primary" id="submitGrantAccessBtn">Authorize & Issue Pathway Credentials &rarr;</button>
                 <span id="grantAccessFeedback" style="font-size:11px;color:var(--muted)"></span>
               </div>
             </form>
-            <div id="grantAccessResultBox" class="hidden" style="margin-top:14px;padding:12px 14px;background:#fbfaf6;border:1px solid var(--line);border-left:3px solid var(--green);border-radius:var(--radius);font-size:11px;line-height:1.6"></div>
+            <div id="grantAccessResultBox" class="hidden" style="margin-top:14px;padding:16px;background:#fbfaf6;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:var(--radius);font-size:12px;line-height:1.6"></div>
           </div>
         </article>
+
+        <!-- ── OFFICIAL OFFICER ASSIGNED BANNER (For Logged-in Officers) ── -->
+        <div id="officerAssignedPathwayBanner" class="hidden" style="margin-bottom:14px;padding:14px 18px;background:linear-gradient(135deg, #f0fdf4, #ecfdf5);border:1.5px solid #86efac;border-radius:6px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="badge badge-green" style="font-size:11px;font-weight:800">🏛️ OFFICIAL ASSIGNED CADRE CURRICULUM</span>
+              <span id="officerAssignedMeta" style="font-size:12px;color:#065f46">Authorized by Cadre Authority</span>
+            </div>
+            <p id="officerAssignedNote" style="font-size:12.5px;color:#166534;margin:4px 0 0 0">
+              This curriculum was officially generated and assigned to your profile by the National Statistical Authority.
+            </p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button type="button" class="primary" id="officerDossierDownloadBtn" style="font-size:12px;padding:6px 12px">
+              Download Assigned Dossier (PDF)
+            </button>
+          </div>
+        </div>
+
 
         <div class="pathway-split-layout">
           <!-- ── LEFT COLUMN: Officer Diagnosis & Roadmap Checklist ── -->
@@ -656,9 +681,13 @@
                     <h2>Discuss Your Pathway</h2>
                     <p class="muted" style="font-size:10px;margin:0">Inquire on sequencing rationale, adjust weekly schedule, or discuss prerequisites.</p>
                   </div>
-                  <span class="badge badge-green chat-panel-badge" id="pathwayAdvisorStatusBadge">Verified Engine</span>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <span class="badge badge-green chat-panel-badge" id="pathwayAdvisorStatusBadge">Verified Engine</span>
+                    <button type="button" id="clearChatBtn" class="icon-button" title="Clear conversation history" style="font-size:12px;padding:3px 7px;border-radius:3px">🗑️</button>
+                  </div>
                 </div>
               </div>
+
               <div id="pathwayChatStream" class="pathway-chat-stream">
                 <div class="chat-msg advisor-msg">
                   <div class="chat-msg-header">STATINTEL ADVISOR &bull; SYSTEM</div>

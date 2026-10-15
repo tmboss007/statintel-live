@@ -104,7 +104,7 @@ $('showLoginBtn').onclick = () => {
   $('loginForm').classList.remove('hidden');
 };
 
-async function startApp() {
+async function startApp(targetPage = null) {
   try {
     currentUser = await api('/api/auth/me');
     const displayName = currentUser.full_name || currentUser.username;
@@ -114,13 +114,31 @@ async function startApp() {
     $('userAvatar').textContent = (displayName[0] || '?').toUpperCase();
     $('loginScreen').classList.add('hidden');
     $('appShell').classList.remove('hidden');
+
+    // Adapt UI for officer role
+    if (currentUser.role === 'officer') {
+      const toggleGrantBtn = $('toggleGrantAccessBtn');
+      if (toggleGrantBtn) toggleGrantBtn.classList.add('hidden');
+      const grantPanel = $('pathwayAdminGrantPanel');
+      if (grantPanel) grantPanel.classList.add('hidden');
+      targetPage = targetPage || 'pathway';
+    } else {
+      const toggleGrantBtn = $('toggleGrantAccessBtn');
+      if (toggleGrantBtn) toggleGrantBtn.classList.remove('hidden');
+    }
+
     await refreshAll();
     await checkHealth();
+
+    if (targetPage) {
+      navigate(targetPage);
+    }
   } catch (e) {
     logout(false);
     $('loginError').textContent = e.message;
   }
 }
+
 
 $('logoutBtn').onclick = () => logout();
 
@@ -1230,6 +1248,45 @@ async function initPathwayPage() {
       if ($('resetPathwayBtn')) $('resetPathwayBtn').onclick = () => resetPathwayPlan();
       if ($('downloadPathwayPdfBtn')) $('downloadPathwayPdfBtn').onclick = () => downloadPathwayPdf();
 
+      // Check if logged in user is an Officer with an Authority-Assigned Pathway
+      if (currentUser && currentUser.role === 'officer') {
+        try {
+          const myRes = await api('/api/pathway/my-pathway').catch(() => null);
+          if (myRes && myRes.has_assigned && myRes.roadmap) {
+            currentPathwayRoadmap = myRes.roadmap;
+            const assignedBanner = $('officerAssignedPathwayBanner');
+            if (assignedBanner) {
+              assignedBanner.classList.remove('hidden');
+              if ($('officerAssignedMeta')) {
+                const dt = myRes.assigned_at ? new Date(myRes.assigned_at).toLocaleDateString() : 'Active';
+                $('officerAssignedMeta').textContent = `Authorized by: ${myRes.assigned_by} (${dt})`;
+              }
+              if ($('officerAssignedNote')) {
+                $('officerAssignedNote').textContent = `This curriculum was officially authorized for ${myRes.officer.name} (${myRes.officer.current_role} → ${myRes.officer.target_role}).`;
+              }
+              const dlBtn = $('officerDossierDownloadBtn');
+              if (dlBtn) dlBtn.onclick = () => downloadPathwayPdf();
+            }
+
+            // Lock selector to officer
+            sel.innerHTML = `<option value="${myRes.officer.id}">${esc(myRes.officer.name)} (${esc(myRes.officer.department)})</option>`;
+            sel.disabled = true;
+            if ($('pathwayCurrentRole')) $('pathwayCurrentRole').value = myRes.officer.current_role;
+            if ($('pathwayTargetRoleSelect')) {
+              $('pathwayTargetRoleSelect').innerHTML = `<option value="${esc(myRes.officer.target_role)}">${esc(myRes.officer.target_role)}</option>`;
+              $('pathwayTargetRoleSelect').disabled = true;
+            }
+
+            renderPathwayDashboard(myRes.roadmap);
+            loadPathwayChatHistory(myRes.officer.id);
+            pathwayInitialized = true;
+            return;
+          }
+        } catch (e) {
+          console.warn('Could not load officer assigned pathway:', e);
+        }
+      }
+
       // Administrator Grant Access Handlers
       const grantPanel = $('pathwayAdminGrantPanel');
       const toggleGrantBtn = $('toggleGrantAccessBtn');
@@ -1237,14 +1294,18 @@ async function initPathwayPage() {
       const grantOfficerSel = $('grantUserOfficerSelect');
 
       if (toggleGrantBtn && grantPanel) {
-        // Show button only if admin (or allow all in demo)
-        toggleGrantBtn.onclick = () => {
-          grantPanel.classList.toggle('hidden');
-          if (!grantPanel.classList.contains('hidden') && grantOfficerSel) {
-            grantOfficerSel.innerHTML = '<option value="">-- No linked officer profile (General study access) --</option>' +
-              officers.map(o => `<option value="${o.id}">${esc(o.name)} (${esc(o.department)})</option>`).join('');
-          }
-        };
+        if (currentUser && currentUser.role === 'officer') {
+          toggleGrantBtn.classList.add('hidden');
+        } else {
+          toggleGrantBtn.classList.remove('hidden');
+          toggleGrantBtn.onclick = () => {
+            grantPanel.classList.toggle('hidden');
+            if (!grantPanel.classList.contains('hidden') && grantOfficerSel) {
+              grantOfficerSel.innerHTML = '<option value="">-- No linked officer profile (General study access) --</option>' +
+                officers.map(o => `<option value="${o.id}">${esc(o.name)} (${esc(o.department)})</option>`).join('');
+            }
+          };
+        }
       }
       if (closeGrantBtn && grantPanel) {
         closeGrantBtn.onclick = () => grantPanel.classList.add('hidden');
@@ -1264,13 +1325,17 @@ async function initPathwayPage() {
           if (feedback) feedback.textContent = 'Provisioning access…';
 
           try {
+            const attachRoadmap = $('grantAttachRoadmap')?.checked ?? true;
             const res = await api('/api/pathway/grant-access', {
               method: 'POST',
               body: {
                 email: email,
                 officer_id: offId,
                 target_role: $('pathwayTargetRoleSelect')?.value || 'Senior Statistical Officer',
-                weekly_hours: parseInt($('pathwayWeeklyHours')?.value || '4', 10)
+                weekly_hours: parseInt($('pathwayWeeklyHours')?.value || '4', 10),
+                preferred_style: $('pathwayStyle')?.value || 'applied',
+                attach_current_roadmap: attachRoadmap,
+                roadmap: currentPathwayRoadmap
               }
             });
 
@@ -1280,19 +1345,45 @@ async function initPathwayPage() {
               let credsHtml = '';
               if (res.temporary_credentials) {
                 credsHtml = `
-                  <div style="margin-top:6px;padding:8px 10px;background:#ffffff;border:1px solid var(--line);border-radius:2px">
-                    <b>Issued Login Credentials:</b><br>
+                  <div style="margin:10px 0;padding:10px 12px;background:#ffffff;border:1px solid var(--line);border-radius:4px">
+                    <b style="color:var(--ink)">Issued Login Credentials:</b><br>
                     Username: <code>${esc(res.temporary_credentials.username)}</code> &bull; 
                     Temporary Password: <code>${esc(res.temporary_credentials.temporary_password)}</code>
                   </div>
                 `;
               }
+              const fullDirectUrl = window.location.origin + res.direct_access_url;
               resultBox.innerHTML = `
-                <strong style="color:var(--green)">✓ ${esc(res.message)}</strong>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <strong style="color:var(--green);font-size:13px">✓ ${esc(res.message)}</strong>
+                  <span class="badge ${res.assigned_pathway_attached ? 'badge-green' : 'badge-gray'}">
+                    ${res.assigned_pathway_attached ? '🏛️ Official Curriculum Sealed & Attached' : 'Standard Access'}
+                  </span>
+                </div>
                 <p style="margin:4px 0 0 0;color:var(--ink)">${esc(res.access_scope)}</p>
                 ${credsHtml}
-                <div style="font-size:9.5px;color:var(--muted);margin-top:4px">Audit Log recorded under System Security Register.</div>
+                <div style="margin-top:10px">
+                  <label style="font-weight:700;font-size:11px;color:var(--muted)">One-Click Direct Access Link:</label>
+                  <div style="display:flex;gap:8px;margin-top:4px">
+                    <input id="directAccessLinkInput" readonly value="${esc(fullDirectUrl)}" style="width:100%;font-family:monospace;font-size:11px;padding:6px">
+                    <button type="button" class="secondary" id="copyDirectLinkBtn" style="white-space:nowrap;font-size:11px">Copy Link</button>
+                    <a href="${esc(res.direct_access_url)}" target="_blank" class="button primary" style="white-space:nowrap;font-size:11px;text-decoration:none">Test Access ↗</a>
+                  </div>
+                </div>
+                <div style="margin-top:10px">
+                  <button type="button" class="secondary" id="copyInviteNoteBtn" style="font-size:11px">📋 Copy Full Officer Invitation Note</button>
+                </div>
+                <div style="font-size:10px;color:var(--muted);margin-top:8px">Audit Log recorded under System Security Register.</div>
               `;
+
+              $('copyDirectLinkBtn') && ($('copyDirectLinkBtn').onclick = () => {
+                navigator.clipboard.writeText(fullDirectUrl);
+                toast('Direct login link copied to clipboard!');
+              });
+              $('copyInviteNoteBtn') && ($('copyInviteNoteBtn').onclick = () => {
+                navigator.clipboard.writeText(res.invitation_note);
+                toast('Full invitation note copied to clipboard!');
+              });
             }
             toast(`Access granted to ${email}`);
             emailInput.value = '';
@@ -1302,6 +1393,7 @@ async function initPathwayPage() {
           }
         };
       }
+
 
       // YouTube Instant Search Filter
       const ytSearch = $('pathwayYtSearchInput');
@@ -1329,9 +1421,11 @@ async function initPathwayPage() {
           const prompt = chip.dataset.pathwayPrompt;
           if (prompt) sendPathwayAdvisorMessage(prompt);
         };
-      });
+      const clearBtn = $('clearChatBtn');
+      if (clearBtn) clearBtn.onclick = () => clearPathwayChatHistory();
 
       pathwayInitialized = true;
+
       onPathwayOfficerChange();
     } else if (sel && !currentPathwayRoadmap) {
       onPathwayOfficerChange();
@@ -1372,11 +1466,10 @@ function onPathwayOfficerChange() {
     } else {
       targetSel.selectedIndex = 0;
     }
-    targetSel.onchange = () => generatePathwayPlan();
-  }
-
   generatePathwayPlan();
+  loadPathwayChatHistory(officerId);
 }
+
 
 async function generatePathwayPlan() {
   const sel = $('pathwayOfficerSelect');
@@ -1695,33 +1788,28 @@ async function sendPathwayAdvisorMessage(userMsg) {
   }
 
   if (statusBadge) {
-    statusBadge.textContent = 'Verifying Against Engine…';
+    statusBadge.textContent = 'Consulting Cadre Advisor…';
     statusBadge.className = 'badge badge-blue';
   }
 
   try {
-    const res = await api('/api/pathway/converse', {
+    const res = await api('/api/pathway/chat/send', {
       method: 'POST',
       body: {
-        roadmap: currentPathwayRoadmap,
-        message: userMsg
+        officer_id: currentPathwayRoadmap?.officer_id || 1,
+        message: userMsg,
+        roadmap: currentPathwayRoadmap
       }
     });
 
     if (thinkingEl) thinkingEl.remove();
 
     if (res.status === 'success') {
-      currentPathwayRoadmap = res.roadmap;
-      appendPathwayChatMessage(
-        'advisor',
-        `<b>Action: ${esc(res.action_taken.replace(/_/g, ' ').toUpperCase())} &bull; ${esc(res.action_detail)}</b><p style="margin:6px 0 0 0">${esc(res.explanation)}</p>`
-      );
+      appendPathwayChatMessage('advisor', `<p style="margin:0">${esc(res.reply)}</p>`);
       if (statusBadge) {
-        statusBadge.textContent = 'Verified Engine';
+        statusBadge.textContent = 'Grounded AI Advisor';
         statusBadge.className = 'badge badge-green';
       }
-      renderPathwayDashboard(currentPathwayRoadmap);
-      toast(`Roadmap updated: ${res.action_detail}`);
     } else {
       appendPathwayChatMessage('advisor', `<p class="error" style="margin:0">Advisor Notice: ${esc(res.detail || 'Unable to process query against engine.')}</p>`);
       if (statusBadge) {
@@ -1738,6 +1826,43 @@ async function sendPathwayAdvisorMessage(userMsg) {
     }
   }
 }
+
+async function loadPathwayChatHistory(officerId) {
+  if (!officerId) return;
+  const stream = $('pathwayChatStream');
+  if (!stream) return;
+  try {
+    const history = await api(`/api/pathway/chat/history/${officerId}`).catch(() => []);
+    stream.innerHTML = '';
+    if (!history || !history.length) {
+      appendPathwayChatMessage('advisor', `
+        <b>StatIntel Grounded Pathway Advisor Ready</b>
+        <p style="margin:4px 0 0 0">
+          I am your Cadre Development Advisor for National Statistical Systems. Ask me about prerequisites, promotional standards, recommended project milestones, or why specific accredited videos are recommended for your career progression.
+        </p>
+      `);
+    } else {
+      history.forEach(m => {
+        appendPathwayChatMessage(m.sender, `<p style="margin:0">${esc(m.message)}</p>`);
+      });
+    }
+  } catch (e) {
+    console.warn('Could not load chat history:', e);
+  }
+}
+
+async function clearPathwayChatHistory() {
+  const officerId = currentPathwayRoadmap?.officer_id || 1;
+  if (!confirm('Clear all conversation history with your AI advisor?')) return;
+  try {
+    await api(`/api/pathway/chat/clear/${officerId}`, { method: 'DELETE' });
+    toast('Chat history cleared.');
+    loadPathwayChatHistory(officerId);
+  } catch (e) {
+    toast(`Clear error: ${e.message}`);
+  }
+}
+
 
 async function downloadPathwayPdf() {
   if (!currentPathwayRoadmap) {
@@ -2086,5 +2211,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // ── Boot ───────────────────────────────────────────────────────────
-(async () => { if (token) await startApp(); })();
+(async () => {
+  let targetPage = null;
+  const hash = window.location.hash;
+  if (hash && hash.includes('autologin=')) {
+    const params = new URLSearchParams(hash.substring(1));
+    const autoToken = params.get('autologin');
+    targetPage = params.get('page') || 'pathway';
+    if (autoToken) {
+      token = autoToken;
+      localStorage.setItem('statintel_token', token);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }
+  if (token) await startApp(targetPage);
+})();
+
 
