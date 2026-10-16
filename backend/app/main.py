@@ -784,7 +784,8 @@ def pathway_converse(payload: PathwayConverseInput, db: Session = Depends(get_db
     return execute_grounded_conversation(
         current_roadmap=payload.roadmap,
         user_message=payload.message,
-        db=db
+        db=db,
+        chat_history=payload.chat_history
     )
 
 
@@ -990,8 +991,20 @@ def pathway_get_chat_history(officer_id: int, db: Session = Depends(get_db), use
 
 @app.post("/api/pathway/chat/send")
 def pathway_chat_send(payload: ChatSendMessageInput, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    """Persistent grounded conversational advisory."""
-    # 1. Save user message
+    """Persistent grounded conversational advisory with multi-turn memory."""
+    # 1. Fetch recent prior conversation history (ordered chronologically)
+    prior_messages = db.scalars(
+        select(ConversationMessage)
+        .where(ConversationMessage.officer_id == payload.officer_id)
+        .order_by(ConversationMessage.created_at.desc())
+        .limit(8)
+    ).all()
+    chat_history = [
+        {"sender": m.sender, "message": m.message}
+        for m in reversed(prior_messages)
+    ]
+
+    # 2. Save user message
     user_msg = ConversationMessage(
         officer_id=payload.officer_id,
         user_id=user.id,
@@ -1002,15 +1015,23 @@ def pathway_chat_send(payload: ChatSendMessageInput, db: Session = Depends(get_d
     db.add(user_msg)
     db.commit()
 
-    # 2. Execute conversation with advisor
-    advisor_res = execute_grounded_conversation(
-        current_roadmap=payload.roadmap or {},
-        user_message=payload.message,
-        db=db
-    )
-    reply_text = advisor_res.get("reply", "")
+    # 3. Resolve roadmap (fallback to assigned_pathway on officer if empty)
+    roadmap = payload.roadmap
+    if not roadmap:
+        off = db.scalar(select(Officer).where(Officer.id == payload.officer_id))
+        if off and off.assigned_pathway:
+            roadmap = off.assigned_pathway
 
-    # 3. Save advisor response
+    # 4. Execute conversation with advisor
+    advisor_res = execute_grounded_conversation(
+        current_roadmap=roadmap or {},
+        user_message=payload.message,
+        db=db,
+        chat_history=chat_history
+    )
+    reply_text = advisor_res.get("reply") or advisor_res.get("explanation", "")
+
+    # 5. Save advisor response
     advisor_msg = ConversationMessage(
         officer_id=payload.officer_id,
         user_id=None,
@@ -1025,7 +1046,8 @@ def pathway_chat_send(payload: ChatSendMessageInput, db: Session = Depends(get_d
         "status": "success",
         "reply": reply_text,
         "mode": advisor_res.get("mode", "grounded_catalog"),
-        "created_at": advisor_msg.created_at.isoformat()
+        "created_at": advisor_msg.created_at.isoformat(),
+        "roadmap": advisor_res.get("roadmap")
     }
 
 

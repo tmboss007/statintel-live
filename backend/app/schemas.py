@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 class LoginInput(BaseModel):
     username: str = Field(min_length=1, max_length=80)
@@ -112,6 +112,7 @@ class PathwayGenerateInput(BaseModel):
 class PathwayConverseInput(BaseModel):
     roadmap: dict
     message: str = Field(min_length=1)
+    chat_history: Optional[List[Dict[str, Any]]] = None
 
 
 class PathwayPdfInput(BaseModel):

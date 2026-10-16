@@ -911,13 +911,14 @@ def _call_anthropic_api(system_prompt: str, user_prompt: str) -> Optional[str]:
 def execute_grounded_conversation(
     current_roadmap: Dict[str, Any],
     user_message: str,
-    db: Session
+    db: Session,
+    chat_history: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
     LLM as an Interpreter:
-    Uses Claude (via Anthropic API) as a grounded conversational advisor over the officer's roadmap.
+    Uses Claude (via Anthropic API) or Gemini as a grounded conversational advisor over the officer's roadmap.
     Deterministically applies any parameter changes (pace, reordering), then generates an accurate,
-    context-aware explanation grounded strictly in the roadmap state and civil service standards.
+    context-aware explanation grounded strictly in the roadmap state, multi-turn history, and civil service standards.
     """
     msg = user_message.lower().strip()
     updated_roadmap = dict(current_roadmap)
@@ -947,8 +948,15 @@ def execute_grounded_conversation(
         action_type = "adjust_pace"
         action_detail = f"Reduced intensity to {new_h} hours/week."
 
-    # 2. Phase Reordering
-    elif ("sampling" in msg and "first" in msg) or "prioritize sampling" in msg:
+    # 2. Priority & Rationale Queries
+    elif "why" in msg or "rationale" in msg or "priority" in msg or "reason" in msg:
+        action_type = "explain_priority"
+        if phases:
+            p1 = phases[0]
+            action_detail = f"Explained mathematical rationale for Phase 1 ({p1['skill']})."
+
+    # 3. Phase Reordering Commands (e.g. "put sampling first", "prioritize python")
+    elif ("sampling" in msg and "first" in msg) or "prioritize sampling" in msg or "put sampling" in msg:
         sampling_idx = next((i for i, p in enumerate(phases) if "sampling" in p["skill"].lower()), -1)
         if sampling_idx > 0:
             item = phases.pop(sampling_idx)
@@ -959,7 +967,7 @@ def execute_grounded_conversation(
             updated_roadmap["phases"] = phases
             action_type = "reorder_phases"
             action_detail = "Re-sequenced Applied Sampling Methodology to Phase 1."
-    elif ("python" in msg and "first" in msg) or ("prioritize python" in msg):
+    elif ("python" in msg and "first" in msg) or ("prioritize python" in msg) or "put python" in msg:
         py_idx = next((i for i, p in enumerate(phases) if "python" in p["skill"].lower()), -1)
         if py_idx > 0:
             item = phases.pop(py_idx)
@@ -970,11 +978,6 @@ def execute_grounded_conversation(
             updated_roadmap["phases"] = phases
             action_type = "reorder_phases"
             action_detail = "Re-sequenced Python & Reproducible Analysis to Phase 1."
-    elif "why" in msg or "rationale" in msg or "priority" in msg:
-        action_type = "explain_priority"
-        if phases:
-            p1 = phases[0]
-            action_detail = f"Explained mathematical rationale for Phase 1 ({p1['skill']})."
 
     # Build Context for the LLM
     officer_name = updated_roadmap.get("officer_name", "Officer")
@@ -999,6 +1002,19 @@ def execute_grounded_conversation(
         for it in p.get("items", []):
             all_providers.add(it.get("channel", "Unknown"))
 
+    # Format multi-turn conversation history
+    history_context = ""
+    if chat_history:
+        turns = []
+        for turn in chat_history[-6:]:
+            s = str(turn.get("sender") or turn.get("role") or "officer").lower()
+            label = "Officer" if s in ["user", "officer"] else "Advisor"
+            txt = (turn.get("message") or turn.get("content") or "").strip()
+            if txt:
+                turns.append(f"{label}: {txt}")
+        if turns:
+            history_context = "Prior Multi-Turn Conversation History:\n" + "\n".join(turns) + "\n\n"
+
     system_prompt = (
         "You are the StatIntel Cadre Progression Advisor — an authoritative, expert statistical civil service consultant.\n"
         "You serve statistical officers in government statistical agencies (e.g., MoSPI, CSO, NSSO, ISI).\n\n"
@@ -1007,7 +1023,8 @@ def execute_grounded_conversation(
         "2. All advice must be grounded in official statistical methodology, civil service cadre rules, and reproducible data standards.\n"
         "3. You speak authoritatively, concisely, and professionally without emojis.\n"
         "4. Directly and specifically answer the user's question. If they ask about providers (like NPTEL, freeCodeCamp, Corey Schafer, StatQuest), explain why those specific accredited institutions and educators were chosen for their academic rigor, government syllabus alignment, or open-source reproducibility.\n"
-        "5. Keep responses between 2 and 4 concise, impactful paragraphs or bullet points."
+        "5. Keep responses between 2 and 4 concise, impactful paragraphs or bullet points.\n"
+        "6. Multi-Turn Follow-Ups: If the officer refers to earlier turns or asks to clarify a previous step or methodology (e.g., 'explain Step 2 again' or 'what about Fellegi-Holt consistency check?'), resolve their question directly using the conversation history and the active roadmap curriculum."
     )
 
     user_prompt = (
@@ -1022,17 +1039,28 @@ def execute_grounded_conversation(
         f"- Action Taken: {action_type} ({action_detail})\n\n"
         f"Active Roadmap Phases & Video Curricula:\n" + "\n\n".join(phases_summary) + "\n\n"
         f"Included Providers in Catalog: {', '.join(sorted(all_providers))}\n\n"
+        f"{history_context}"
         f"Officer Inquiry: \"{user_message}\"\n\n"
-        f"Please provide a grounded, accurate, professional response directly addressing the officer's inquiry."
+        f"Please provide a grounded, accurate, professional response directly addressing the officer's inquiry, taking any prior conversational context into account."
     )
 
-    # Call Anthropic API
+    # Call Anthropic API / Groq / Gemini
     llm_response = _call_anthropic_api(system_prompt, user_prompt)
 
     if llm_response:
         explanation = llm_response
     else:
         # High-quality contextual fallback if API proxy is in maintenance or unkeyed
+        phase_target_idx = None
+        if "phase 1" in msg or "step 1" in msg or "first phase" in msg:
+            phase_target_idx = 0
+        elif "phase 2" in msg or "step 2" in msg or "second phase" in msg:
+            phase_target_idx = 1
+        elif "phase 3" in msg or "step 3" in msg or "third phase" in msg:
+            phase_target_idx = 2
+        elif "phase 4" in msg or "step 4" in msg or "fourth phase" in msg:
+            phase_target_idx = 3
+
         if "nptel" in msg or "provider" in msg or "channel" in msg or "source" in msg or "youtube" in msg:
             action_type = "explain_providers"
             action_detail = "Explained accredited provider selection methodology."
@@ -1044,6 +1072,38 @@ def execute_grounded_conversation(
                 f"**Marginal Revolution University / MIT** for econometrics and causal inference; "
                 f"**CrashCourse** and **Dr Nic's Maths and Stats** for foundational sampling theory; "
                 f"and international bodies (**UNSD**, **Eurostat**) for official data quality and imputation standards."
+            )
+        elif phase_target_idx is not None and phase_target_idx < len(phases):
+            target_ph = phases[phase_target_idx]
+            items_str = ", ".join([f"'{it.get('title')}' ({it.get('channel')})" for it in target_ph.get("items", [])])
+            action_type = f"explain_phase_{phase_target_idx + 1}"
+            action_detail = f"Detailed breakdown of Phase {phase_target_idx + 1} ({target_ph.get('skill')})."
+            explanation = (
+                f"**Phase {target_ph.get('order')} Deep Dive ({target_ph.get('skill')}):**\n\n"
+                f"- **Core Practical Milestone:** {target_ph.get('milestone')}\n"
+                f"- **Curriculum Modules:** {items_str or 'Structured methodology exercises'}\n"
+                f"- **Competency Gap Severity:** {target_ph.get('gap_severity', 50.0)} ({target_ph.get('severity_level', 'standard')} priority).\n\n"
+                f"This phase specifically addresses critical statistical requirements for progression from **{curr_role}** to **{target_role}**."
+            )
+        elif "fellegi" in msg or "holt" in msg or "consistency" in msg or "imputation" in msg:
+            action_type = "explain_fellegi_holt"
+            action_detail = "Explained Fellegi-Holt automated microdata consistency principles."
+            explanation = (
+                "**Fellegi-Holt Microdata Validation & Consistency Principles:**\n\n"
+                "The **Fellegi-Holt methodology (1976)** is the foundational standard for automated survey editing in official statistical systems:\n"
+                "1. **Logical Consistency:** Derives all implied edit checks so that microdata records never encounter contradictory validation rules.\n"
+                "2. **Minimal Field Modification:** Formulates an integer programming optimization that edits the minimal number of suspect attributes to satisfy all constraints.\n"
+                "3. **Preservation of Joint Distributions:** Ensures data cleaning does not introduce artificial bias into survey aggregates or multi-stage population estimates."
+            )
+        elif "exam" in msg or "quiz" in msg or "assessment" in msg or "certificate" in msg:
+            action_type = "explain_assessments"
+            action_detail = "Explained competency examinations and certified readiness uplift."
+            explanation = (
+                f"**Competency Assessments & Verified Certification:**\n\n"
+                f"Each phase of your pathway includes a formal competency assessment. "
+                f"Achieving a score of 70% or higher generates a cryptographically verifiable certificate (with SHA-256 integrity hash) "
+                f"and permanently uplifts your recorded readiness toward **{target_role}**. You can trigger assessments directly "
+                f"from each phase milestone card."
             )
         elif action_type == "adjust_pace":
             explanation = (
@@ -1123,6 +1183,8 @@ def execute_grounded_conversation(
         "action_taken": action_type,
         "action_detail": action_detail,
         "explanation": explanation,
+        "reply": explanation,
+        "mode": "grounded_catalog",
         "verification_status": "mechanically_verified",
         "roadmap": updated_roadmap
     }
