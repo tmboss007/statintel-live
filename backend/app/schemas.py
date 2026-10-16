@@ -19,6 +19,19 @@ class UserUpdate(BaseModel):
 class ElevateInput(BaseModel):
     admin_password: str = Field(min_length=1, max_length=256)
 
+class ProgressToggleInput(BaseModel):
+    officer_id: int
+    item_type: str = Field(default="video_lecture")  # video_lecture, phase_task, practical_exercise
+    item_key: str
+    item_title: Optional[str] = ""
+    completed: bool = True
+    notes: Optional[str] = ""
+
+class ProgressNoteInput(BaseModel):
+    officer_id: int
+    item_key: str
+    notes: str
+
 class OfficerInput(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     department: str = Field(default="Not specified", max_length=180)

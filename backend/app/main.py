@@ -9,11 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from .database import Base, engine, get_db, SessionLocal
-from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate, ConversationMessage
+from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate, ConversationMessage, OfficerProgress
 from .schemas import (
     LoginInput, RegisterInput, UserUpdate, ElevateInput, OfficerInput, SkillInput, RoleInput,
     CourseInput, CopilotInput, PathwayGenerateInput, PathwayConverseInput, PathwayPdfInput,
-    PathwayAccessGrantInput, QuizRequest, QuizSubmission, ChatSendMessageInput
+    PathwayAccessGrantInput, QuizRequest, QuizSubmission, ChatSendMessageInput,
+    ProgressToggleInput, ProgressNoteInput
 )
 
 from .security import hash_password, verify_password, create_token, current_user, require_admin
@@ -143,13 +144,19 @@ def ensure_schema_migrations(eng):
         for col, col_type in [
             ("assigned_pathway", "TEXT"),
             ("assigned_by", "VARCHAR(80)"),
-            ("assigned_at", "TIMESTAMP WITH TIME ZONE")
+            ("assigned_at", "TIMESTAMP WITH TIME ZONE"),
+            ("base_readiness", "FLOAT DEFAULT 0")
         ]:
             try:
                 conn.execute(text(f"ALTER TABLE officers ADD COLUMN {col} {col_type}"))
                 conn.commit()
             except Exception:
                 pass
+        try:
+            conn.execute(text("UPDATE officers SET base_readiness = readiness WHERE base_readiness IS NULL OR base_readiness = 0"))
+            conn.commit()
+        except Exception:
+            pass
 
 
 @asynccontextmanager
@@ -1018,6 +1025,161 @@ def pathway_list_grants(db: Session = Depends(get_db), admin: User = Depends(req
     ]
 
 
+# ── Officer Milestone Progress & Dynamic Readiness Tracking ──────────────
+
+def recompute_officer_readiness(db: Session, officer: Officer) -> dict:
+    base = officer.base_readiness if (officer.base_readiness is not None and officer.base_readiness > 0) else (officer.readiness or 50.0)
+    if not officer.base_readiness or officer.base_readiness == 0:
+        officer.base_readiness = base
+
+    progress_rows = db.scalars(
+        select(OfficerProgress).where(OfficerProgress.officer_id == officer.id, OfficerProgress.completed == True)
+    ).all()
+    completed_videos = sum(1 for p in progress_rows if p.item_type == "video_lecture")
+    completed_tasks = sum(1 for p in progress_rows if p.item_type == "phase_task")
+    cert_count = db.scalar(
+        select(func.count(Certificate.id)).where(Certificate.officer_id == officer.id)
+    ) or 0
+
+    uplift = (completed_videos * 1.5) + (completed_tasks * 1.0) + (cert_count * 4.0)
+    new_readiness = round(min(98.0, base + uplift), 1)
+    officer.readiness = new_readiness
+    db.commit()
+    return {
+        "base_readiness": base,
+        "uplift": round(uplift, 1),
+        "current_readiness": new_readiness,
+        "completed_videos": completed_videos,
+        "completed_tasks": completed_tasks,
+        "certificates_earned": cert_count,
+        "total_completed": len(progress_rows)
+    }
+
+
+@app.get("/api/pathway/progress/{officer_id}")
+def get_officer_progress(officer_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    officer = db.get(Officer, officer_id)
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer profile not found")
+
+    stats = recompute_officer_readiness(db, officer)
+    items = db.scalars(
+        select(OfficerProgress)
+        .where(OfficerProgress.officer_id == officer_id)
+        .order_by(OfficerProgress.completed_at.desc())
+    ).all()
+
+    tr_lower = (officer.target_role or "").lower()
+    target_threshold = 85.0
+    if "director" in tr_lower or "advisor" in tr_lower:
+        target_threshold = 92.0
+    elif "assistant director" in tr_lower or "senior" in tr_lower:
+        target_threshold = 80.0
+
+    return {
+        "status": "success",
+        "officer_id": officer.id,
+        "officer_name": officer.name,
+        "current_role": officer.current_role,
+        "target_role": officer.target_role,
+        "target_threshold": target_threshold,
+        "base_readiness": stats["base_readiness"],
+        "readiness_uplift": stats["uplift"],
+        "current_readiness": stats["current_readiness"],
+        "distance_to_target": max(0.0, round(target_threshold - stats["current_readiness"], 1)),
+        "completed_videos": stats["completed_videos"],
+        "completed_tasks": stats["completed_tasks"],
+        "certificates_earned": stats["certificates_earned"],
+        "items": [
+            {
+                "item_key": it.item_key,
+                "item_type": it.item_type,
+                "item_title": it.item_title,
+                "completed": it.completed,
+                "notes": it.notes,
+                "completed_at": it.completed_at.isoformat() if it.completed_at else None
+            }
+            for it in items
+        ]
+    }
+
+
+@app.post("/api/pathway/progress/toggle")
+def toggle_officer_progress(payload: ProgressToggleInput, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    officer = db.get(Officer, payload.officer_id)
+    if not officer:
+        raise HTTPException(status_code=404, detail="Officer profile not found")
+
+    rec = db.scalar(
+        select(OfficerProgress).where(
+            OfficerProgress.officer_id == payload.officer_id,
+            OfficerProgress.item_key == payload.item_key
+        )
+    )
+    if not rec:
+        rec = OfficerProgress(
+            officer_id=payload.officer_id,
+            item_type=payload.item_type,
+            item_key=payload.item_key,
+            item_title=payload.item_title or "",
+            completed=payload.completed,
+            notes=payload.notes or "",
+            completed_at=datetime.now(timezone.utc)
+        )
+        db.add(rec)
+    else:
+        rec.completed = payload.completed
+        if payload.item_title:
+            rec.item_title = payload.item_title
+        if payload.notes is not None:
+            rec.notes = payload.notes
+        rec.completed_at = datetime.now(timezone.utc)
+
+    db.commit()
+    stats = recompute_officer_readiness(db, officer)
+
+    _audit(
+        db, user, "progress_update", "officers", officer.id,
+        f"{'Completed' if payload.completed else 'Unmarked'} {payload.item_type}: {payload.item_title or payload.item_key} (Readiness: {stats['current_readiness']}%)"
+    )
+
+    return {
+        "status": "success",
+        "item_key": rec.item_key,
+        "completed": rec.completed,
+        "current_readiness": stats["current_readiness"],
+        "readiness_uplift": stats["uplift"],
+        "completed_videos": stats["completed_videos"],
+        "completed_tasks": stats["completed_tasks"],
+        "certificates_earned": stats["certificates_earned"],
+        "message": f"Readiness updated to {stats['current_readiness']}% (+{stats['uplift']}% total uplift)"
+    }
+
+
+@app.post("/api/pathway/progress/note")
+def save_officer_progress_note(payload: ProgressNoteInput, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    rec = db.scalar(
+        select(OfficerProgress).where(
+            OfficerProgress.officer_id == payload.officer_id,
+            OfficerProgress.item_key == payload.item_key
+        )
+    )
+    if not rec:
+        rec = OfficerProgress(
+            officer_id=payload.officer_id,
+            item_type="video_lecture",
+            item_key=payload.item_key,
+            completed=False,
+            notes=payload.notes,
+            completed_at=datetime.now(timezone.utc)
+        )
+        db.add(rec)
+    else:
+        rec.notes = payload.notes
+    db.commit()
+    return {"status": "success", "item_key": payload.item_key, "notes": payload.notes}
+
+
 # ── Competency Assessment & Certification Engine ───────────────────────────
 
 @app.get("/api/assessment/quiz")
@@ -1048,6 +1210,12 @@ def assessment_submit(
             answers=payload.answers,
             db=db
         )
+        if result.get("passed"):
+            officer = db.get(Officer, payload.officer_id)
+            if officer:
+                stats = recompute_officer_readiness(db, officer)
+                result["current_readiness"] = stats["current_readiness"]
+                result["readiness_uplift"] = stats["uplift"]
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

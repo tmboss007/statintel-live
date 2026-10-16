@@ -27,6 +27,7 @@ class Officer(Base):
     current_role: Mapped[str] = mapped_column(String(160), default="Not specified")
     target_role: Mapped[str] = mapped_column(String(160), default="Not specified")
     readiness: Mapped[float] = mapped_column(Float, default=0)
+    base_readiness: Mapped[float] = mapped_column(Float, default=0)
     open_gaps: Mapped[int] = mapped_column(Integer, default=0)
     skills: Mapped[str] = mapped_column(Text, default="")
     missing_skills: Mapped[str] = mapped_column(Text, default="")
@@ -135,5 +136,20 @@ class ConversationMessage(Base):
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     officer: Mapped[Officer] = relationship()
+
+
+class OfficerProgress(Base):
+    __tablename__ = "officer_progress"
+    __table_args__ = (UniqueConstraint("officer_id", "item_key", name="uq_officer_item"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    officer_id: Mapped[int] = mapped_column(ForeignKey("officers.id", ondelete="CASCADE"), index=True)
+    item_type: Mapped[str] = mapped_column(String(40), index=True)  # "video_lecture", "phase_task", "quiz"
+    item_key: Mapped[str] = mapped_column(String(255), index=True)
+    item_title: Mapped[str] = mapped_column(String(255), default="")
+    completed: Mapped[bool] = mapped_column(Boolean, default=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    officer: Mapped[Officer] = relationship()
+
 
 

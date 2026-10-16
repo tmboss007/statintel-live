@@ -1877,3 +1877,72 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
   cursor: pointer;
 }
 
+/* ── Progress & Milestone HUD Styles ─────────────────────────────── */
+.item-completed {
+  background: #f0fdf4 !important;
+  transition: background 200ms ease;
+}
+.item-completed .phase-item-title {
+  color: #166534;
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+.badge-green {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+.badge-blue {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+.yt-card-completed {
+  border-color: #86efac !important;
+  background: #f0fdf4 !important;
+}
+.yt-card-completed .yt-card-title {
+  color: #166534;
+}
+.btn-toggle-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.btn-toggle-done.done {
+  background: #10b981;
+  border-color: #059669;
+  color: #ffffff;
+}
+.btn-card-note {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.btn-card-note:hover {
+  background: #ffffff;
+  color: var(--ink);
+}
+.yt-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0,0,0,0.05);
+}
+
+

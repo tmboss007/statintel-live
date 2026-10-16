@@ -1575,6 +1575,156 @@ function resetPathwayPlan() {
   toast('Pathway reset to baseline standards');
 }
 
+let officerProgressData = null;
+
+async function loadOfficerProgress(officerId) {
+  if (!officerId) return;
+  try {
+    const res = await api(`/api/pathway/progress/${officerId}`);
+    officerProgressData = res;
+
+    // Update local officer in officers cache
+    const off = officers.find(o => o.id === officerId);
+    if (off) off.readiness = res.current_readiness;
+
+    // Restore checked items
+    checkedPathwayItems.clear();
+    if (res.items && res.items.length) {
+      res.items.forEach(it => {
+        if (it.completed) {
+          checkedPathwayItems.add(it.item_key);
+          if (it.item_key.startsWith('video:')) {
+            checkedPathwayItems.add(it.item_key.replace('video:', ''));
+          } else if (it.item_key.startsWith('task:')) {
+            checkedPathwayItems.add(it.item_key.replace('task:', ''));
+          }
+        }
+      });
+    }
+
+    // Apply checked state to visible rows and checkboxes
+    document.querySelectorAll('.phase-item-check').forEach(chk => {
+      const id = chk.dataset.id;
+      const isDone = checkedPathwayItems.has(id) || checkedPathwayItems.has('task:' + id) || checkedPathwayItems.has('video:' + id);
+      chk.checked = isDone;
+      chk.closest('tr')?.classList.toggle('item-completed', isDone);
+    });
+
+    // Update video cards in right column
+    document.querySelectorAll('.yt-video-card').forEach(card => {
+      const vid = card.dataset.vid;
+      if (vid) {
+        const isDone = checkedPathwayItems.has(vid) || checkedPathwayItems.has('video:' + vid);
+        card.classList.toggle('yt-card-completed', isDone);
+        const btn = card.querySelector('.btn-toggle-done');
+        if (btn) {
+          btn.classList.toggle('done', isDone);
+          btn.textContent = isDone ? '✓ Completed' : 'Mark Done';
+        }
+      }
+    });
+
+    renderProgressHud(res);
+    updatePathwayProgress();
+  } catch (err) {
+    console.warn('Could not load officer progress:', err);
+  }
+}
+
+function renderProgressHud(data) {
+  if (!data) return;
+  if ($('hudReadinessVal')) $('hudReadinessVal').textContent = `${data.current_readiness}%`;
+  if ($('hudUpliftBadge')) $('hudUpliftBadge').textContent = `+${data.readiness_uplift}% Uplift`;
+  if ($('hudTargetRoleText')) $('hudTargetRoleText').textContent = data.target_role || '--';
+  if ($('hudVideosWatched')) $('hudVideosWatched').textContent = `${data.completed_videos} done`;
+  if ($('hudTasksDone')) $('hudTasksDone').textContent = `${data.completed_tasks} done`;
+  if ($('hudCertsEarned')) $('hudCertsEarned').textContent = data.certificates_earned;
+  if ($('hudReadinessBarText')) $('hudReadinessBarText').textContent = `${data.current_readiness}% (Base: ${data.base_readiness}%)`;
+  if ($('hudTargetThresholdText')) $('hudTargetThresholdText').textContent = `Cadre Promotion Target: ${data.target_threshold}%`;
+
+  const pctOfTarget = Math.min(100, Math.round((data.current_readiness / (data.target_threshold || 85)) * 100));
+  if ($('hudProgressBar')) $('hudProgressBar').style.width = `${pctOfTarget}%`;
+
+  const nextActionTitle = $('hudNextActionTitle');
+  const nextActionBtn = $('hudNextActionBtn');
+
+  if (nextActionTitle && nextActionBtn) {
+    if (data.current_readiness >= data.target_threshold) {
+      nextActionTitle.innerHTML = `<span style="color:#059669">🏆 <b>Cadre Promotion Threshold Achieved (${data.current_readiness}%)</b> — Ready for Departmental Promotion Review!</span>`;
+      nextActionBtn.textContent = 'Download Certified Dossier 📄';
+      nextActionBtn.onclick = () => $('downloadPathwayPdfBtn')?.click();
+    } else {
+      let foundAction = false;
+      if (currentPathwayRoadmap && currentPathwayRoadmap.phases) {
+        for (const ph of currentPathwayRoadmap.phases) {
+          if (ph.items) {
+            for (const it of ph.items) {
+              const isDone = checkedPathwayItems.has(it.id) || checkedPathwayItems.has('video:' + it.id);
+              if (!isDone) {
+                nextActionTitle.innerHTML = `Watch lecture: <b>${esc(it.title)}</b> (${it.duration_min} min • ${esc(it.channel)})`;
+                nextActionBtn.textContent = '▶ Start Video Lecture';
+                nextActionBtn.onclick = () => openVideoPlayer(it.id, it.title, it.channel, it.verified_standard);
+                foundAction = true;
+                break;
+              }
+            }
+          }
+          if (foundAction) break;
+        }
+
+        if (!foundAction && currentPathwayRoadmap.phases.length) {
+          const ph = currentPathwayRoadmap.phases[0];
+          nextActionTitle.innerHTML = `Take Examination: <b>Phase ${ph.order} Competency Quiz</b> (${esc(ph.skill)})`;
+          nextActionBtn.textContent = '📝 Take Assessment';
+          nextActionBtn.onclick = () => openCompetencyQuiz(ph.skill, currentPathwayRoadmap.cadre_tier || 'operational', ph.order);
+          foundAction = true;
+        }
+      }
+
+      if (!foundAction) {
+        nextActionTitle.textContent = 'Review curriculum and complete verified modules to elevate readiness.';
+        nextActionBtn.textContent = 'Explore Curricula ↓';
+        nextActionBtn.onclick = () => {
+          $('pathwayPhasesContainer')?.scrollIntoView({ behavior: 'smooth' });
+        };
+      }
+    }
+  }
+}
+
+async function toggleItemPersistentProgress(officerId, itemType, itemKey, itemTitle, completed) {
+  if (!officerId) return;
+  try {
+    const res = await api('/api/pathway/progress/toggle', {
+      method: 'POST',
+      body: {
+        officer_id: officerId,
+        item_type: itemType,
+        item_key: itemKey,
+        item_title: itemTitle || '',
+        completed: completed
+      }
+    });
+
+    if (completed) {
+      checkedPathwayItems.add(itemKey);
+      if (itemKey.startsWith('video:')) checkedPathwayItems.add(itemKey.replace('video:', ''));
+      if (itemKey.startsWith('task:')) checkedPathwayItems.add(itemKey.replace('task:', ''));
+      toast(`✓ Progress saved! Readiness increased to ${res.current_readiness}% (+${res.readiness_uplift}% total uplift)`);
+    } else {
+      checkedPathwayItems.delete(itemKey);
+      if (itemKey.startsWith('video:')) checkedPathwayItems.delete(itemKey.replace('video:', ''));
+      if (itemKey.startsWith('task:')) checkedPathwayItems.delete(itemKey.replace('task:', ''));
+      toast(`Item unmarked. Readiness recalculated to ${res.current_readiness}%.`);
+    }
+
+    await loadOfficerProgress(officerId);
+  } catch (err) {
+    console.error('Failed to update progress:', err);
+    toast(`Progress update error: ${err.message}`);
+  }
+}
+
 function renderPathwayDashboard(data) {
   // Update metric strip
   if ($('pathwayCurrentReadiness')) $('pathwayCurrentReadiness').textContent = `${data.current_readiness}%`;
@@ -1675,13 +1825,10 @@ function renderPathwayDashboard(data) {
       container.querySelectorAll('.phase-item-check').forEach(chk => {
         chk.onchange = e => {
           const id = e.target.dataset.id;
-          if (e.target.checked) {
-            checkedPathwayItems.add(id);
-          } else {
-            checkedPathwayItems.delete(id);
-          }
-          e.target.closest('tr')?.classList.toggle('item-completed', e.target.checked);
-          updatePathwayProgress();
+          const officerId = currentPathwayRoadmap?.officer_id || 1;
+          const row = e.target.closest('tr');
+          const title = row?.querySelector('.phase-item-title')?.textContent || id;
+          toggleItemPersistentProgress(officerId, 'phase_task', 'task:' + id, title, e.target.checked);
         };
       });
 
@@ -1725,36 +1872,65 @@ function renderPathwayDashboard(data) {
   }
 
   updatePathwayProgress();
+  loadOfficerProgress(data.officer_id);
 }
 
 let currentPathwayVideos = [];
 
 function renderPathwayVideosList(videos) {
-
   const ytContainer = $('pathwayYtList');
   if (!ytContainer) return;
   if (!videos.length) {
     ytContainer.innerHTML = '<div class="empty-state" style="padding:20px;text-align:center;color:var(--muted)">No video modules matching search.</div>';
     return;
   }
-  ytContainer.innerHTML = videos.map(it => `
-    <div class="yt-video-card">
-      <div class="yt-card-top">
-        <h4 class="yt-card-title">${esc(it.title)}</h4>
-        <span class="yt-duration-badge">${it.duration_min} min</span>
+  ytContainer.innerHTML = videos.map(it => {
+    const isDone = checkedPathwayItems.has(it.id) || checkedPathwayItems.has('video:' + it.id);
+    return `
+      <div class="yt-video-card ${isDone ? 'yt-card-completed' : ''}" data-vid="${esc(it.id)}">
+        <div class="yt-card-top">
+          <h4 class="yt-card-title">${esc(it.title)}</h4>
+          <span class="yt-duration-badge">${it.duration_min} min</span>
+        </div>
+        <div class="yt-card-meta">
+          <span class="yt-card-channel">${esc(it.channel)}</span>
+          <span class="yt-card-standard">${esc(it.verified_standard || 'Accredited MoSPI/ISI Standard')}</span>
+        </div>
+        <div style="font-size:9.5px;color:var(--muted);line-height:1.4">
+          Phase ${it.phaseOrder}: <b>${esc(it.phaseSkill)}</b> &bull; Quality: <b>${it.score}/100</b>
+        </div>
+        <div class="yt-card-actions">
+          <button type="button" class="btn-toggle-done ${isDone ? 'done' : ''}" data-vid="${esc(it.id)}" data-title="${esc(it.title)}">
+            ${isDone ? '✓ Completed' : 'Mark Done'}
+          </button>
+          <div style="display:flex;gap:4px">
+            <button type="button" class="btn-card-play button primary" style="font-size:10px;padding:3px 8px" data-vid="${esc(it.id)}" data-title="${esc(it.title)}" data-channel="${esc(it.channel)}" data-standard="${esc(it.verified_standard || 'Accredited')}">
+              ▶ Play
+            </button>
+            <a href="${esc(it.url)}" target="_blank" rel="noreferrer" class="btn-card-note" style="text-decoration:none">
+              YouTube ↗
+            </a>
+          </div>
+        </div>
       </div>
-      <div class="yt-card-meta">
-        <span class="yt-card-channel">${esc(it.channel)}</span>
-        <span class="yt-card-standard">${esc(it.verified_standard || 'Accredited MoSPI/ISI Standard')}</span>
-      </div>
-      <div style="font-size:9.5px;color:var(--muted);line-height:1.4">
-        Phase ${it.phaseOrder}: <b>${esc(it.phaseSkill)}</b> &bull; Quality: <b>${it.score}/100</b>
-      </div>
-      <a href="${esc(it.url)}" target="_blank" rel="noreferrer" class="yt-pill-btn">
-        Watch on YouTube &rarr;
-      </a>
-    </div>
-  `).join('');
+    `;
+  }).join('');
+
+  ytContainer.querySelectorAll('.btn-toggle-done').forEach(btn => {
+    btn.onclick = () => {
+      const vid = btn.dataset.vid;
+      const title = btn.dataset.title;
+      const officerId = currentPathwayRoadmap?.officer_id || 1;
+      const isDone = checkedPathwayItems.has(vid) || checkedPathwayItems.has('video:' + vid);
+      toggleItemPersistentProgress(officerId, 'video_lecture', 'video:' + vid, title, !isDone);
+    };
+  });
+
+  ytContainer.querySelectorAll('.btn-card-play').forEach(btn => {
+    btn.onclick = () => {
+      openVideoPlayer(btn.dataset.vid, btn.dataset.title, btn.dataset.channel, btn.dataset.standard);
+    };
+  });
 }
 
 function filterPathwayYtList(query) {
@@ -2197,20 +2373,11 @@ function openVideoPlayer(videoId, title, channel, standard) {
   
   const chk = $('videoMarkCompleteCheckbox');
   if (chk) {
-    chk.checked = checkedPathwayItems.has(videoId);
+    const isDone = checkedPathwayItems.has(videoId) || checkedPathwayItems.has('video:' + videoId);
+    chk.checked = isDone;
     chk.onchange = () => {
-      if (chk.checked) {
-        checkedPathwayItems.add(videoId);
-      } else {
-        checkedPathwayItems.delete(videoId);
-      }
-      const tableRow = $(`row_${videoId}`);
-      if (tableRow) {
-        tableRow.classList.toggle('item-completed', chk.checked);
-        const itemChk = tableRow.querySelector('.phase-item-check');
-        if (itemChk) itemChk.checked = chk.checked;
-      }
-      updatePathwayProgress();
+      const officerId = currentPathwayRoadmap?.officer_id || 1;
+      toggleItemPersistentProgress(officerId, 'video_lecture', 'video:' + videoId, title, chk.checked);
     };
   }
 
