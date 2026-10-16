@@ -137,30 +137,50 @@ def seed(db: Session):
 
 
 def ensure_schema_migrations(eng):
-    """Ensure newly added columns exist in existing database tables."""
-    from sqlalchemy import text
-    with eng.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN officer_id INTEGER"))
-            conn.commit()
-        except Exception:
-            pass
-        for col, col_type in [
-            ("assigned_pathway", "TEXT"),
-            ("assigned_by", "VARCHAR(80)"),
-            ("assigned_at", "TIMESTAMP WITH TIME ZONE"),
-            ("base_readiness", "FLOAT DEFAULT 0")
-        ]:
+    """Ensure newly added columns exist in existing database tables safely across SQLite & PostgreSQL."""
+    from sqlalchemy import inspect, text
+    import logging
+    try:
+        inspector = inspect(eng)
+        table_names = {t.lower() for t in inspector.get_table_names()}
+
+        # 1. users table
+        if "users" in table_names:
+            existing_user_cols = {col["name"].lower() for col in inspector.get_columns("users")}
+            if "officer_id" not in existing_user_cols:
+                try:
+                    with eng.begin() as conn:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN officer_id INTEGER"))
+                    logging.info("Added officer_id column to users table.")
+                except Exception as e:
+                    logging.warning(f"Could not add officer_id to users: {e}")
+
+        # 2. officers table
+        if "officers" in table_names:
+            existing_officer_cols = {col["name"].lower() for col in inspector.get_columns("officers")}
+            new_cols = [
+                ("assigned_pathway", "TEXT"),
+                ("assigned_by", "VARCHAR(80)"),
+                ("assigned_at", "TIMESTAMP WITH TIME ZONE"),
+                ("base_readiness", "FLOAT DEFAULT 0")
+            ]
+            for col_name, col_type in new_cols:
+                if col_name.lower() not in existing_officer_cols:
+                    try:
+                        with eng.begin() as conn:
+                            conn.execute(text(f"ALTER TABLE officers ADD COLUMN {col_name} {col_type}"))
+                        logging.info(f"Added {col_name} column to officers table.")
+                    except Exception as e:
+                        logging.warning(f"Could not add {col_name} to officers: {e}")
+
+            # Backfill base_readiness if needed
             try:
-                conn.execute(text(f"ALTER TABLE officers ADD COLUMN {col} {col_type}"))
-                conn.commit()
-            except Exception:
-                pass
-        try:
-            conn.execute(text("UPDATE officers SET base_readiness = readiness WHERE base_readiness IS NULL OR base_readiness = 0"))
-            conn.commit()
-        except Exception:
-            pass
+                with eng.begin() as conn:
+                    conn.execute(text("UPDATE officers SET base_readiness = readiness WHERE base_readiness IS NULL OR base_readiness = 0"))
+            except Exception as e:
+                logging.warning(f"Could not backfill base_readiness: {e}")
+    except Exception as e:
+        logging.error(f"Error in ensure_schema_migrations: {e}")
 
 
 @asynccontextmanager
