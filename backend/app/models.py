@@ -27,7 +27,7 @@ class Officer(Base):
     current_role: Mapped[str] = mapped_column(String(160), default="Not specified")
     target_role: Mapped[str] = mapped_column(String(160), default="Not specified")
     readiness: Mapped[float] = mapped_column(Float, default=0)
-    base_readiness: Mapped[float] = mapped_column(Float, default=0)
+    base_readiness: Mapped[float] = mapped_column(Float, default=0, nullable=True)
     open_gaps: Mapped[int] = mapped_column(Integer, default=0)
     skills: Mapped[str] = mapped_column(Text, default="")
     missing_skills: Mapped[str] = mapped_column(Text, default="")
@@ -35,8 +35,8 @@ class Officer(Base):
     assessment_date: Mapped[str] = mapped_column(String(40), default="")
     years_in_role: Mapped[int] = mapped_column(Integer, default=0)
     qualification: Mapped[str] = mapped_column(String(200), default="")
-    assigned_pathway: Mapped[str] = mapped_column(Text, default="")
-    assigned_by: Mapped[str] = mapped_column(String(80), default="")
+    assigned_pathway: Mapped[str | None] = mapped_column(Text, default="", nullable=True)
+    assigned_by: Mapped[str | None] = mapped_column(String(80), default="", nullable=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -150,6 +150,18 @@ class OfficerProgress(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     notes: Mapped[str] = mapped_column(Text, default="")
     officer: Mapped[Officer] = relationship()
+
+
+class DepartmentSkillWeight(Base):
+    __tablename__ = "department_skill_weights"
+    __table_args__ = (UniqueConstraint("department", "skill_name", name="uq_dept_skill"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    department: Mapped[str] = mapped_column(String(180), index=True)
+    skill_name: Mapped[str] = mapped_column(String(180), index=True)
+    multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    rationale: Mapped[str] = mapped_column(String(255), default="Strategic departmental priority")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
 
 
 

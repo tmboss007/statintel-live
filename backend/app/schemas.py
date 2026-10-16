@@ -32,6 +32,11 @@ class ProgressNoteInput(BaseModel):
     item_key: str
     notes: str
 
+class DepartmentWeightUpdateInput(BaseModel):
+    weight_id: int
+    multiplier: float = Field(ge=1.0, le=2.5)
+    rationale: Optional[str] = ""
+
 class OfficerInput(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     department: str = Field(default="Not specified", max_length=180)

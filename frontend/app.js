@@ -157,7 +157,7 @@ const pageLabels = {
   overview: 'Overview', analytics: 'Analytics', officers: 'Officer profiles',
   skills: 'Skill intelligence', learning: 'Learning catalogue',
   roles: 'Role registry', graph: 'Knowledge graph', reports: 'Reports & exports',
-  pathway: 'Plan my pathway'
+  pathway: 'Plan my pathway', succession: 'Cadre Succession'
 };
 
 function navigate(page) {
@@ -171,6 +171,7 @@ function navigate(page) {
   if (page === 'roles') loadRoles();
   if (page === 'officers') loadOfficers();
   if (page === 'analytics') loadAnalytics();
+  if (page === 'succession') loadSuccessionIntelligence();
 }
 
 $('nav').onclick = e => { const b = e.target.closest('[data-page]'); if (b) navigate(b.dataset.page); };
@@ -2485,6 +2486,263 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// ── Cadre Succession & Strategic Intelligence ───────────────────────
+let currentSuccessionData = null;
+let currentDepartmentWeights = null;
+
+async function loadSuccessionIntelligence() {
+  const cardsContainer = $('successionMatrixCards');
+  const deptsContainer = $('deptWeightsList');
+  if (cardsContainer) cardsContainer.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)">Computing cadre vulnerability matrix & bench strength ratios…</div>';
+  if (deptsContainer) deptsContainer.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)">Loading departmental skill criticality weights…</div>';
+
+  try {
+    const [matrixRes, weightsRes] = await Promise.all([
+      api('/api/succession/vulnerability-matrix'),
+      api('/api/succession/department-weights')
+    ]);
+
+    currentSuccessionData = matrixRes;
+    currentDepartmentWeights = weightsRes;
+
+    renderSuccessionSummary(matrixRes.overall_summary);
+    renderSuccessionMatrix(matrixRes.succession_matrix);
+    renderDepartmentWeights(weightsRes.departments);
+  } catch (err) {
+    if (cardsContainer) cardsContainer.innerHTML = `<div class="error" style="padding:20px">Failed to load succession matrix: ${esc(err.message)}</div>`;
+    if (deptsContainer) deptsContainer.innerHTML = `<div class="error" style="padding:20px">Failed to load department weights: ${esc(err.message)}</div>`;
+    toast(`Error: ${err.message}`);
+  }
+}
+
+function renderSuccessionSummary(summary) {
+  if (!summary) return;
+  if ($('succTotalSanctioned')) $('succTotalSanctioned').textContent = summary.total_sanctioned_evaluated ?? '—';
+  if ($('succTotalReady')) $('succTotalReady').textContent = summary.total_ready_feeder_officers ?? '—';
+  if ($('succOverallRatio')) {
+    const r = summary.overall_bench_strength_ratio ?? 0;
+    $('succOverallRatio').textContent = `${r.toFixed(2)}×`;
+    $('succOverallRatio').style.color = r < 0.5 ? 'var(--accent)' : (r < 1.0 ? 'var(--amber)' : 'var(--green)');
+  }
+  if ($('succCriticalDeficits')) $('succCriticalDeficits').textContent = `${summary.critical_vulnerabilities ?? 0} Cadres`;
+}
+
+function renderSuccessionMatrix(matrix) {
+  const container = $('successionMatrixCards');
+  if (!container) return;
+  if (!matrix || !matrix.length) {
+    container.innerHTML = '<p class="muted" style="padding:20px;text-align:center">No cadre succession tiers defined.</p>';
+    return;
+  }
+
+  container.innerHTML = matrix.map(m => {
+    const ratio = m.bench_strength_ratio || 0;
+    const pctBar = Math.min(Math.round((ratio / 2.0) * 100), 100);
+    const riskBadgeClass = m.risk_level === 'CRITICAL' ? 'badge-red' : (m.risk_level === 'VULNERABLE' ? 'badge-amber' : (m.risk_level === 'HEALTHY' ? 'badge-blue' : 'badge-green'));
+
+    const candidateRows = (m.top_candidates && m.top_candidates.length > 0)
+      ? m.top_candidates.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:#ffffff;border:1px solid var(--line);border-radius:4px;margin-bottom:6px;font-size:12px">
+            <div>
+              <b style="color:var(--ink);cursor:pointer" onclick="openDrawer(${c.id})">${esc(c.name)}</b>
+              <div style="font-size:10.5px;color:var(--muted)">${esc(c.department)} · ${c.years_in_role} yrs in role</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-weight:700;font-size:12px;color:${c.readiness >= 75 ? 'var(--green)' : (c.readiness >= 60 ? 'var(--amber)' : 'var(--accent)')}">${c.readiness}%</span>
+              <span class="badge ${c.status === 'ready' ? 'badge-green' : (c.status === 'near_ready' ? 'badge-amber' : '')}" style="font-size:9.5px;padding:2px 6px">
+                ${c.status === 'ready' ? '✓ Ready' : (c.status === 'near_ready' ? 'Pipeline' : 'Developing')}
+              </span>
+            </div>
+          </div>
+        `).join('')
+      : '<p class="muted" style="font-size:11.5px;margin:6px 0">No feeder candidates actively mapped to this tier.</p>';
+
+    return `
+      <article class="panel" style="border-top:3px solid ${m.risk_color};display:flex;flex-direction:column;justify-content:space-between">
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+            <div>
+              <span class="badge" style="font-size:10px;text-transform:uppercase;background:var(--panel2);color:var(--ink);margin-bottom:4px;display:inline-block">
+                ${esc(m.cadre_tier)}
+              </span>
+              <h3 style="margin:2px 0 0 0;font-size:15px;color:var(--ink)">
+                ${esc(m.feeder_cadre)} &rarr; <span style="color:var(--accent)">${esc(m.target_cadre)}</span>
+              </h3>
+            </div>
+            <span class="badge ${riskBadgeClass}" style="font-size:10.5px;font-weight:700">
+              ${esc(m.risk_level)}
+            </span>
+          </div>
+
+          <p class="muted" style="font-size:11.5px;line-height:1.45;margin-bottom:12px">
+            ${esc(m.responsibilities)}
+          </p>
+
+          <!-- Bench Strength Metric Card -->
+          <div style="background:#ffffff;border:1px solid var(--line);border-radius:4px;padding:12px;margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+              <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted)">Bench Strength Ratio:</span>
+              <b style="font-size:17px;color:${m.risk_color}">${ratio.toFixed(2)}×</b>
+            </div>
+            <div style="width:100%;height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-bottom:8px">
+              <div style="width:${pctBar}%;height:100%;background:${m.risk_color};border-radius:999px;transition:width 0.4s ease"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted)">
+              <span>Qualified Bench: <b>${m.ready_candidates_count}</b></span>
+              <span>Pipeline (60-74%): <b>${m.pipeline_candidates_count}</b></span>
+              <span>Sanctioned: <b>${m.sanctioned_posts}</b></span>
+            </div>
+          </div>
+
+          <!-- Recommendation Alert -->
+          <div style="background:rgba(0,0,0,0.02);border-left:3px solid ${m.risk_color};padding:8px 10px;border-radius:2px;font-size:11.5px;color:var(--ink);margin-bottom:12px">
+            <b>Directive:</b> ${esc(m.strategic_recommendation)}
+          </div>
+
+          <!-- Top Candidates Roster -->
+          <div style="margin-top:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted)">Feeder Candidate Roster</span>
+              <span style="font-size:10px;color:var(--muted)">Threshold: ≥${m.critical_threshold}%</span>
+            </div>
+            ${candidateRows}
+          </div>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderDepartmentWeights(departments) {
+  const container = $('deptWeightsList');
+  if (!container) return;
+  if (!departments || !departments.length) {
+    container.innerHTML = '<p class="muted" style="padding:20px;text-align:center">No departmental weights loaded.</p>';
+    return;
+  }
+
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const notice = $('deptWeightAdminNotice');
+  if (notice) {
+    if (isAdmin) {
+      notice.textContent = '👑 Admin Mode: Multipliers Editable';
+      notice.className = 'badge badge-green';
+    } else {
+      notice.textContent = 'Viewer Mode: Read-Only Multipliers';
+      notice.className = 'badge badge-amber';
+    }
+  }
+
+  container.innerHTML = departments.map(d => {
+    const deltaColor = d.readiness_delta >= 0 ? 'var(--green)' : 'var(--accent)';
+    const deltaSign = d.readiness_delta >= 0 ? '+' : '';
+
+    const priorityItems = (d.priorities || []).map(p => `
+      <div style="background:#ffffff;border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+          <div>
+            <b style="font-size:12.5px;color:var(--ink)">${esc(p.skill_name)}</b>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${esc(p.rationale)}</div>
+          </div>
+          <span class="badge" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;font-weight:700">
+            <span id="multVal-${p.id}">${p.multiplier.toFixed(1)}</span>×
+          </span>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:6px">
+          <span>Gap Prevalence: <b>${p.gap_percentage}%</b> (${p.officers_with_gap} officers)</span>
+          <span>Weighted Score: <b>${p.weighted_gap_score}</b></span>
+        </div>
+
+        ${isAdmin ? `
+          <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">
+            <input type="range" min="1.0" max="2.5" step="0.1" value="${p.multiplier}" 
+              id="slider-${p.id}" 
+              style="flex:1;accent-color:var(--green);cursor:pointer"
+              oninput="$('multVal-${p.id}').textContent = parseFloat(this.value).toFixed(1)"
+            >
+            <button class="secondary" style="font-size:10.5px;padding:3px 8px" onclick="saveMultiplier(${p.id})">Save</button>
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+
+    return `
+      <article class="panel" style="background:#ffffff">
+        <div class="panel-head" style="padding-bottom:10px;border-bottom:1px solid var(--line)">
+          <div>
+            <span class="badge" style="font-size:9.5px;background:var(--panel2);color:var(--ink);margin-bottom:3px;display:inline-block">DIRECTORATE</span>
+            <h3 style="margin:0;font-size:14.5px;color:var(--ink)">${esc(d.department)}</h3>
+            <span style="font-size:11px;color:var(--muted)">${d.officer_count} officers assigned</span>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:10px;text-transform:uppercase;color:var(--muted);font-weight:700">Strategic Readiness</div>
+            <div style="font-size:16px;font-weight:800;color:var(--ink)">
+              ${d.strategic_weighted_readiness}%
+              <span style="font-size:11px;font-weight:600;color:${deltaColor}">(${deltaSign}${d.readiness_delta}%)</span>
+            </div>
+            <div style="font-size:10px;color:var(--muted)">Baseline: ${d.baseline_readiness}%</div>
+          </div>
+        </div>
+        <div style="padding-top:12px">
+          <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Mission-Critical Competencies:</div>
+          ${priorityItems || '<p class="muted" style="font-size:11px">No priority competencies configured.</p>'}
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+async function saveMultiplier(weightId) {
+  const slider = $(`slider-${weightId}`);
+  if (!slider) return;
+  const newMultiplier = parseFloat(slider.value);
+  try {
+    toast('Updating departmental priority multiplier…');
+    await api('/api/succession/department-weights', {
+      method: 'POST',
+      body: {
+        weight_id: weightId,
+        multiplier: newMultiplier,
+        rationale: 'Updated via Executive Directorate Intelligence Cockpit'
+      }
+    });
+    toast('Priority multiplier saved!');
+    await loadSuccessionIntelligence();
+  } catch (err) {
+    toast(`Failed to update weight: ${err.message}`);
+  }
+}
+
+function exportSuccessionDossier() {
+  if (!currentSuccessionData) {
+    toast('No succession data available to export.');
+    return;
+  }
+  const payload = {
+    exported_at: new Date().toISOString(),
+    organization: 'National Statistical Office / ISS Cadre Authority',
+    cadre_bench_strength_standard: 'Officers in Feeder Cadre with Readiness >= 75% / Sanctioned Target Posts',
+    overall_summary: currentSuccessionData.overall_summary,
+    succession_matrix: currentSuccessionData.succession_matrix,
+    departmental_weights: currentDepartmentWeights ? currentDepartmentWeights.departments : []
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `StatIntel-Cadre-Succession-Intelligence-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Succession dossier exported successfully.');
+}
+
+// Wire succession page action buttons
+if ($('refreshSuccessionBtn')) $('refreshSuccessionBtn').onclick = () => loadSuccessionIntelligence();
+if ($('exportSuccessionBtn')) $('exportSuccessionBtn').onclick = exportSuccessionDossier;
 
 // ── Boot ───────────────────────────────────────────────────────────
 (async () => {

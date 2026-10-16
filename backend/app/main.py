@@ -9,12 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from .database import Base, engine, get_db, SessionLocal
-from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate, ConversationMessage, OfficerProgress
+from .models import User, Officer, Skill, Role, RoleSkill, Course, AuditLog, AssessmentAttempt, Certificate, ConversationMessage, OfficerProgress, DepartmentSkillWeight
 from .schemas import (
     LoginInput, RegisterInput, UserUpdate, ElevateInput, OfficerInput, SkillInput, RoleInput,
     CourseInput, CopilotInput, PathwayGenerateInput, PathwayConverseInput, PathwayPdfInput,
     PathwayAccessGrantInput, QuizRequest, QuizSubmission, ChatSendMessageInput,
-    ProgressToggleInput, ProgressNoteInput
+    ProgressToggleInput, ProgressNoteInput, DepartmentWeightUpdateInput
 )
 
 from .security import hash_password, verify_password, create_token, current_user, require_admin
@@ -30,6 +30,10 @@ from .pathway import (
 from .assessment import (
     get_quiz_questions, evaluate_quiz_submission, generate_certificate_pdf
 )
+from .succession import (
+    compute_succession_vulnerability_matrix, compute_departmental_criticality_analytics, update_department_multiplier
+)
+from .cache import get_cache, set_cache, invalidate_cache
 
 
 FRONTEND_DIR = os.getenv("FRONTEND_DIR")
@@ -167,6 +171,8 @@ async def lifespan(app: FastAPI):
         ensure_admin(db)
         if os.getenv("SEED_DEMO_DATA", "true").lower() == "true":
             seed(db)
+        from .succession import seed_department_skill_weights_if_empty
+        seed_department_skill_weights_if_empty(db)
     yield
 
 
@@ -310,6 +316,9 @@ def elevate_role(payload: ElevateInput, db: Session = Depends(get_db), user: Use
 
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    cached_val = get_cache("analytics:dashboard")
+    if cached_val is not None:
+        return cached_val
     people = db.scalars(select(Officer)).all()
     count = len(people)
     average = round(statistics.mean([p.readiness for p in people]), 1) if people else 0
@@ -340,8 +349,7 @@ def dashboard(db: Session = Depends(get_db), user: User = Depends(current_user))
         {"name": d, "count": v["count"], "avg_readiness": round(v["readiness_sum"]/v["count"],1)}
         for d, v in sorted(dept_counts.items())
     ]
-
-    return {
+    res = {
         "profile_count": count,
         "average_readiness": average,
         "reported_gaps": total_gaps,
@@ -355,6 +363,8 @@ def dashboard(db: Session = Depends(get_db), user: User = Depends(current_user))
         "data_note": "Metrics are computed from database records. Readiness and gap values are user-entered or synthetic until backed by validated assessment evidence.",
         "official_statistics": False,
     }
+    set_cache("analytics:dashboard", res, ttl_seconds=60)
+    return res
 
 
 # ── Analytics Endpoints ────────────────────────────────────────────────────
@@ -417,6 +427,7 @@ def create_officer(payload: OfficerInput, db: Session = Depends(get_db), user: U
     _audit(db, user, "create", "officer", detail=p.name)
     db.commit()
     db.refresh(p)
+    invalidate_cache("analytics")
     return {"id": p.id, "name": p.name}
 
 
@@ -432,6 +443,7 @@ def update_officer(officer_id: int, payload: OfficerInput, db: Session = Depends
     p.missing_skills = ";".join(payload.missing_skills)
     _audit(db, user, "update", "officer", entity_id=p.id, detail=p.name)
     db.commit()
+    invalidate_cache("analytics")
     return {"ok": True, "id": p.id}
 
 
@@ -443,6 +455,7 @@ def delete_officer(officer_id: int, db: Session = Depends(get_db), user: User = 
     _audit(db, user, "delete", "officer", entity_id=p.id, detail=p.name)
     db.delete(p)
     db.commit()
+    invalidate_cache("analytics")
     return None
 
 
@@ -506,6 +519,7 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
             added += 1
     _audit(db, user, "import", "officer", detail=f"CSV: +{added} ~{updated} skip={skipped}")
     db.commit()
+    invalidate_cache("analytics")
     return {
         "added": added, "updated": updated, "skipped": skipped,
         "note": "CSV values are stored but not independently verified. Include source and assessment date for traceability.",
@@ -1045,6 +1059,7 @@ def recompute_officer_readiness(db: Session, officer: Officer) -> dict:
     new_readiness = round(min(98.0, base + uplift), 1)
     officer.readiness = new_readiness
     db.commit()
+    invalidate_cache("analytics")
     return {
         "base_readiness": base,
         "uplift": round(uplift, 1),
@@ -1276,6 +1291,46 @@ def officer_certificates(officer_id: int, db: Session = Depends(get_db), user: U
         }
         for c in certs
     ]
+
+
+# ── Strategic Cadre Intelligence & Succession Planning ─────────────────────
+
+@app.get("/api/succession/vulnerability-matrix")
+def get_succession_matrix(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """
+    Cadre Succession Vulnerability Matrix identifying critical feeder gaps
+    and bench strength ratios across all Statistical Cadre levels.
+    """
+    cached_matrix = get_cache("analytics:succession_matrix")
+    if cached_matrix is not None:
+        return cached_matrix
+    result = compute_succession_vulnerability_matrix(db)
+    set_cache("analytics:succession_matrix", result, ttl_seconds=60)
+    return result
+
+
+@app.get("/api/succession/department-weights")
+def get_department_weights(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """
+    Returns department-level strategic skill criticality multipliers and weighted readiness.
+    """
+    cached_weights = get_cache("analytics:department_weights")
+    if cached_weights is not None:
+        return cached_weights
+    result = compute_departmental_criticality_analytics(db)
+    set_cache("analytics:department_weights", result, ttl_seconds=60)
+    return result
+
+
+@app.post("/api/succession/department-weights")
+def set_department_weight(payload: DepartmentWeightUpdateInput, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """
+    Updates custom skill criticality multiplier (1.0x - 2.5x) for a statistical directorate.
+    """
+    result = update_department_multiplier(db, payload.weight_id, payload.multiplier, payload.rationale or "")
+    invalidate_cache("analytics")
+    _audit(db, admin, "update_skill_weight", "department_skill_weights", payload.weight_id, f"Set {result['department']} / {result['skill_name']} multiplier to {result['multiplier']}x")
+    return result
 
 
 # ── Static files & SPA fallback ────────────────────────────────────────────

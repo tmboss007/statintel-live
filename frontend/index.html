@@ -77,6 +77,7 @@
       <button data-page="graph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="4" r="2" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="12" r="2" stroke="currentColor" stroke-width="1.3"/><line x1="5.5" y1="5.5" x2="7" y2="10.5" stroke="currentColor" stroke-width="1"/><line x1="10.5" y1="5.5" x2="9" y2="10.5" stroke="currentColor" stroke-width="1"/><line x1="6" y1="4" x2="10" y2="4" stroke="currentColor" stroke-width="1"/></svg><span>Knowledge graph</span></button>
       <button data-page="reports"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="12" height="14" rx="1" stroke="currentColor" stroke-width="1.5"/><line x1="5" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.2"/><line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" stroke-width="1.2"/><line x1="5" y1="11" x2="9" y2="11" stroke="currentColor" stroke-width="1.2"/></svg><span>Reports & exports</span></button>
       <button data-page="pathway"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 13 L6 9 L9 11 L14 4" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="14" cy="4" r="1.5" fill="currentColor"/><line x1="2" y1="14" x2="14" y2="14" stroke="currentColor" stroke-width="1.2"/></svg><span>Plan my pathway</span></button>
+      <button data-page="succession"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5v13M3 6l5-4.5 5 4.5M2 14.5h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="5.5" y="8.5" width="5" height="6" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg><span>Cadre Succession</span></button>
     </nav>
     <div class="sidebar-bottom">
       <div class="system-card">
@@ -787,6 +788,97 @@
             </article>
           </div>
         </div>
+      </section>
+ 
+      <!-- ═══════════ CADRE SUCCESSION & STRATEGIC INTELLIGENCE PAGE ═══════════ -->
+      <section class="page" id="page-succession">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">STRATEGIC CADRE INTELLIGENCE &bull; SUCCESSION BENCH PLANNING</p>
+            <h1>Cadre Succession & Strategic Vulnerability Matrix</h1>
+            <p class="muted">Predictive workforce bench strength ratios across promotional cadres and dynamic directorate-level skill criticality weighting.</p>
+          </div>
+          <div class="button-row">
+            <button class="secondary" id="refreshSuccessionBtn" type="button">↻ Refresh Matrix</button>
+            <button class="primary" id="exportSuccessionBtn" type="button">Export Succession Brief</button>
+          </div>
+        </div>
+
+        <!-- ── STATS RIBBON ── -->
+        <div class="stats" id="successionStatsRibbon">
+          <article class="stat">
+            <small>SANCTIONED POSTS EVALUATED</small>
+            <strong id="succTotalSanctioned">—</strong>
+            <span>Target cadre seats</span>
+          </article>
+          <article class="stat">
+            <small>READY FEEDER TALENT (≥75%)</small>
+            <strong id="succTotalReady" style="color:var(--green)">—</strong>
+            <span>Verified candidates</span>
+          </article>
+          <article class="stat accent">
+            <small>AGGREGATE BENCH RATIO</small>
+            <strong id="succOverallRatio">—</strong>
+            <span>Ready / Sanctioned</span>
+          </article>
+          <article class="stat">
+            <small>CRITICAL CADRE DEFICITS</small>
+            <strong id="succCriticalDeficits" style="color:var(--accent)">—</strong>
+            <span>Ratio &lt; 0.50 (High Risk)</span>
+          </article>
+        </div>
+
+        <!-- ── MATHEMATICAL METHODOLOGY CALLOUT ── -->
+        <div class="notice" style="border-left:4px solid var(--accent);background:linear-gradient(180deg, #ffffff, #faf8f5);margin-bottom:16px;padding:14px 18px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+            <div>
+              <b style="font-size:13px;color:var(--ink)">📐 Cadre Bench Strength Standard Formula:</b>
+              <div style="font-family:monospace;font-size:13px;margin:6px 0;background:#fff;padding:6px 12px;border-radius:4px;display:inline-block;border:1px solid var(--line)">
+                Bench Strength Ratio = (Officers in Feeder Cadre with Readiness ≥ 75%) / (Sanctioned Posts in Target Cadre)
+              </div>
+              <p class="muted" style="margin:2px 0 0 0;font-size:11.5px">
+                Bench Strength Ratios below <b>0.50</b> signal imminent leadership vacancies without organic succession depth. Ratios from <b>0.50 – 0.99</b> indicate fragile candidate bench strength requiring proactive curriculum acceleration.
+              </p>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px">
+              <span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #f87171">CRITICAL (&lt;0.50)</span>
+              <span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">VULNERABLE (0.50–0.99)</span>
+              <span class="badge" style="background:#dbeafe;color:#1e40af;border:1px solid #93c5fd">HEALTHY (1.00–1.99)</span>
+              <span class="badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">ROBUST (≥2.00)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── CADRE SUCCESSION VULNERABILITY CARDS / TABLE ── -->
+        <article class="panel" style="margin-bottom:20px">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow" style="color:var(--accent)">CADRE PROGRESSION TIERS &bull; INDIAN STATISTICAL SERVICE & SSS</p>
+              <h2>Promotional Bench Vulnerability Analysis</h2>
+              <p class="muted">Evaluating feeder pools, current incumbents, qualified candidate ratios, and priority successors.</p>
+            </div>
+          </div>
+          <div id="successionMatrixCards" style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));gap:16px">
+            <div style="text-align:center;padding:30px;color:var(--muted)">Loading Cadre Succession Matrix…</div>
+          </div>
+        </article>
+
+        <!-- ── DYNAMIC DEPARTMENTAL SKILL CRITICALITY WEIGHTING ── -->
+        <article class="panel" style="border-top:3px solid var(--green)">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow" style="color:var(--green)">DIRECTORATE ALIGNMENT &bull; DYNAMIC CRITICALITY MULTIPLIERS</p>
+              <h2>Departmental Skill Criticality & Strategic Readiness</h2>
+              <p class="muted">Tune mission multipliers (1.0× – 2.5×) to re-weight priority competency severity and recalculate strategic organizational readiness.</p>
+            </div>
+            <div id="deptWeightAdminNotice" class="badge badge-amber" style="font-size:11px">Admin Auth Required to Update</div>
+          </div>
+          <div style="padding:16px">
+            <div id="deptWeightsList" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px">
+              <div style="text-align:center;padding:30px;color:var(--muted)">Loading Directorate Skill Priorities…</div>
+            </div>
+          </div>
+        </article>
       </section>
 
     </div><!-- .content -->
