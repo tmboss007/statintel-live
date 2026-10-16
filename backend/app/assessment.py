@@ -735,13 +735,17 @@ def generate_certificate_pdf(cert: Certificate, officer: Officer) -> bytes:
     c.drawCentredString(width / 2.0, height - 150, "This is to officially certify that statistical officer")
 
     # Officer Name in Large Gold/Cyan
+    officer_name = (officer.name if officer else cert.officer_name) or "Statistical Officer"
+    dept_name = (officer.department if officer else "National Statistical System") or "National Statistical System"
+    current_role_name = (officer.current_role if officer else "Statistical Cadre Officer") or "Statistical Cadre Officer"
+
     c.setFillColor(colors.HexColor("#38BDF8"))
     c.setFont("Helvetica-Bold", 26)
-    c.drawCentredString(width / 2.0, height - 185, officer.name.upper())
+    c.drawCentredString(width / 2.0, height - 185, officer_name.upper())
 
     c.setFillColor(colors.HexColor("#E2E8F0"))
     c.setFont("Helvetica", 11)
-    dept_str = f"Department / Directorate: {officer.department}  •  Current Post: {officer.current_role}"
+    dept_str = f"Department / Directorate: {dept_name}  •  Current Post: {current_role_name}"
     c.drawCentredString(width / 2.0, height - 208, dept_str)
 
     # Competency Mastery Block
@@ -755,7 +759,7 @@ def generate_certificate_pdf(cert: Certificate, officer: Officer) -> bytes:
 
     # Cadre clearance line
     tier_label = cert.cadre_tier.capitalize()
-    target_role_label = cert.target_role or officer.target_role or "Advanced Cadre Specialization"
+    target_role_label = cert.target_role or (officer.target_role if officer else None) or "Advanced Cadre Specialization"
     clearance_text = f"Clearance Approved: {target_role_label}  |  Cadre Level: {tier_label} Tier  |  Examination Score: {cert.score}%"
     c.setFillColor(colors.HexColor("#34D399"))
     c.setFont("Helvetica-Bold", 11)

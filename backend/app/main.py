@@ -1304,8 +1304,6 @@ def certificate_download_pdf(cert_uuid: str, db: Session = Depends(get_db)):
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found or invalid identifier")
     officer = db.get(Officer, cert.officer_id)
-    if not officer:
-        raise HTTPException(status_code=404, detail="Officer record missing")
     pdf_bytes = generate_certificate_pdf(cert, officer)
     return Response(
         content=pdf_bytes,

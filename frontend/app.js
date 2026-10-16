@@ -2344,7 +2344,7 @@ async function loadOfficerCertificates(officerId) {
       certs.forEach(c => {
         // Find matching phase cards or badge locations
         document.querySelectorAll('.btn-phase-quiz').forEach(btn => {
-          if (btn.dataset.skill.toLowerCase() === c.skill_name.toLowerCase()) {
+          if (btn.dataset.skill && c.skill_name && btn.dataset.skill.toLowerCase().trim() === c.skill_name.toLowerCase().trim()) {
             const badgeBox = $(`phaseCertBadge_${btn.dataset.order}`);
             if (badgeBox) {
               badgeBox.innerHTML = `

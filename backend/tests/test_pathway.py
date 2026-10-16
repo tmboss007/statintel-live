@@ -218,3 +218,42 @@ def test_persistent_chat_api_endpoints(client, officer_user, db_session):
     assert "reply" in data2
     assert len(data2["reply"]) > 0
     assert "Fellegi-Holt" in data2["reply"] or "consistency" in data2["reply"].lower()
+
+
+def test_certificate_pdf_generation_and_verification(client, db_session):
+    """Verify certificate PDF generation and scannable verification endpoint."""
+    from app.models import Certificate
+    from app.assessment import generate_certificate_pdf
+    import uuid
+
+    cert_uuid = f"CERT-TEST-{uuid.uuid4().hex[:8].upper()}"
+    cert = Certificate(
+        cert_uuid=cert_uuid,
+        officer_id=99999,  # Detached officer id
+        officer_name="Sunita Deshmukh",
+        skill_name="Python & Reproducible Analysis",
+        cadre_tier="senior",
+        target_role="Assistant Director",
+        score=94.5
+    )
+    db_session.add(cert)
+    db_session.commit()
+
+    # 1. Test verification endpoint
+    v_resp = client.get(f"/api/assessment/certificate/{cert_uuid}/verify")
+    assert v_resp.status_code == 200
+    v_data = v_resp.json()
+    assert v_data["status"] == "valid"
+    assert v_data["officer_name"] == "Sunita Deshmukh"
+
+    # 2. Test PDF generation directly with None officer
+    pdf_bytes = generate_certificate_pdf(cert, None)
+    assert pdf_bytes is not None
+    assert len(pdf_bytes) > 1000
+    assert pdf_bytes.startswith(b"%PDF")
+
+    # 3. Test PDF download endpoint
+    dl_resp = client.get(f"/api/assessment/certificate/{cert_uuid}/pdf")
+    assert dl_resp.status_code == 200
+    assert dl_resp.headers["content-type"] == "application/pdf"
+    assert len(dl_resp.content) > 1000
