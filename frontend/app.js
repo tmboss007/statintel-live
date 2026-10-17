@@ -22,6 +22,32 @@ function toast(message) {
   setTimeout(() => t.classList.remove('show'), 3200);
 }
 
+async function copyToClipboard(text, successMsg = 'Copied to clipboard!') {
+  if (!text) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      toast(successMsg);
+      return;
+    }
+  } catch (err) {
+    console.warn('Clipboard writeText failed, attempting fallback…', err);
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast(successMsg);
+  } catch (fallbackErr) {
+    toast('Please copy manually.');
+  }
+}
+
 // ── API Helper ─────────────────────────────────────────────────────
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -1404,12 +1430,10 @@ async function initPathwayPage() {
               `;
 
               $('copyDirectLinkBtn') && ($('copyDirectLinkBtn').onclick = () => {
-                navigator.clipboard.writeText(fullDirectUrl);
-                toast('Direct login link copied to clipboard!');
+                copyToClipboard(fullDirectUrl, 'Direct login link copied to clipboard!');
               });
               $('copyInviteNoteBtn') && ($('copyInviteNoteBtn').onclick = () => {
-                navigator.clipboard.writeText(res.invitation_note);
-                toast('Full invitation note copied to clipboard!');
+                copyToClipboard(res.invitation_note, 'Full invitation note copied to clipboard!');
               });
             }
             toast(`Access granted to ${email}`);
