@@ -257,3 +257,68 @@ def test_certificate_pdf_generation_and_verification(client, db_session):
     assert dl_resp.status_code == 200
     assert dl_resp.headers["content-type"] == "application/pdf"
     assert len(dl_resp.content) > 1000
+
+
+def test_officer_progress_tracking_and_readiness_uplift(client, officer_user, db_session):
+    """Verify item toggles update officer progress and accurately uplift readiness score."""
+    token = officer_user["token"]
+    officer = officer_user["officer"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Fetch initial progress
+    get_res = client.get(f"/api/pathway/progress/{officer.id}", headers=headers)
+    assert get_res.status_code == 200
+    init_data = get_res.json()
+    base_readiness = init_data["base_readiness"]
+
+    # 2. Mark a video completed
+    toggle_res1 = client.post(
+        "/api/pathway/progress/toggle",
+        headers=headers,
+        json={
+            "officer_id": officer.id,
+            "item_type": "video_lecture",
+            "item_key": "video:samp_vid_01",
+            "item_title": "Stratified and Cluster Sampling",
+            "completed": True
+        }
+    )
+    assert toggle_res1.status_code == 200
+    data1 = toggle_res1.json()
+    assert data1["status"] == "success"
+    assert data1["completed"] is True
+    assert data1["completed_videos"] >= 1
+    assert data1["current_readiness"] >= base_readiness + 1.5
+
+    # 3. Mark a task completed
+    toggle_res2 = client.post(
+        "/api/pathway/progress/toggle",
+        headers=headers,
+        json={
+            "officer_id": officer.id,
+            "item_type": "phase_task",
+            "item_key": "task:nss_stratification_exercise",
+            "item_title": "Design NSSO stratified sampling frame",
+            "completed": True
+        }
+    )
+    assert toggle_res2.status_code == 200
+    data2 = toggle_res2.json()
+    assert data2["completed_tasks"] >= 1
+    assert data2["current_readiness"] >= data1["current_readiness"] + 1.0
+
+    # 4. Unmark video and verify graceful recalculation
+    unmark_res = client.post(
+        "/api/pathway/progress/toggle",
+        headers=headers,
+        json={
+            "officer_id": officer.id,
+            "item_type": "video_lecture",
+            "item_key": "video:samp_vid_01",
+            "completed": False
+        }
+    )
+    assert unmark_res.status_code == 200
+    unmark_data = unmark_res.json()
+    assert unmark_data["completed"] is False
+    assert unmark_data["current_readiness"] < data2["current_readiness"]
