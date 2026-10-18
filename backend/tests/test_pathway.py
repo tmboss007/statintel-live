@@ -322,3 +322,33 @@ def test_officer_progress_tracking_and_readiness_uplift(client, officer_user, db
     unmark_data = unmark_res.json()
     assert unmark_data["completed"] is False
     assert unmark_data["current_readiness"] < data2["current_readiness"]
+
+
+def test_string_serialized_roadmap_resilience(client, officer_user, db_session):
+    """Verify that pathway endpoints and engine accept JSON string roadmaps without ValueError."""
+    import json
+    from app.pathway import execute_grounded_conversation, generate_pathway_pdf_dossier
+
+    raw_roadmap = {
+        "officer_name": "Priya Sharma",
+        "current_role": "Junior Statistical Officer",
+        "target_role": "Senior Statistical Officer",
+        "weekly_hours": 4,
+        "estimated_weeks": 4,
+        "phases": []
+    }
+    string_roadmap = json.dumps(raw_roadmap)
+
+    # 1. Test execute_grounded_conversation with string roadmap
+    res = execute_grounded_conversation(
+        current_roadmap=string_roadmap,
+        user_message="Hello advisor",
+        db=db_session
+    )
+    assert res["status"] == "success"
+    assert "reply" in res
+
+    # 2. Test generate_pathway_pdf_dossier with string roadmap
+    pdf_bytes = generate_pathway_pdf_dossier(string_roadmap)
+    assert pdf_bytes is not None
+    assert pdf_bytes.startswith(b"%PDF")

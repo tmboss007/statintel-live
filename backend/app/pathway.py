@@ -921,6 +921,14 @@ def execute_grounded_conversation(
     context-aware explanation grounded strictly in the roadmap state, multi-turn history, and civil service standards.
     """
     msg = user_message.lower().strip()
+    if isinstance(current_roadmap, str):
+        try:
+            current_roadmap = json.loads(current_roadmap)
+        except Exception:
+            current_roadmap = {}
+    elif not isinstance(current_roadmap, dict):
+        current_roadmap = {}
+
     updated_roadmap = dict(current_roadmap)
     phases = [dict(p) for p in updated_roadmap.get("phases", [])]
     pool = set(updated_roadmap.get("candidate_id_pool", []))
@@ -1195,6 +1203,13 @@ def generate_pathway_pdf_dossier(roadmap: Dict[str, Any]) -> bytes:
     Generate an official, publication-grade printable PDF checklist dossier
     using ReportLab with institutional typography and warm editorial palette.
     """
+    if isinstance(roadmap, str):
+        try:
+            roadmap = json.loads(roadmap)
+        except Exception:
+            roadmap = {}
+    elif not isinstance(roadmap, dict):
+        roadmap = {}
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, KeepTogether

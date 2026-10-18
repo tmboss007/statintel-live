@@ -791,8 +791,16 @@ def pathway_converse(payload: PathwayConverseInput, db: Session = Depends(get_db
 
 @app.post("/api/pathway/export-pdf")
 def pathway_export_pdf(payload: PathwayPdfInput, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    pdf_bytes = generate_pathway_pdf_dossier(payload.roadmap)
-    officer_id = payload.roadmap.get("officer_id", "dossier")
+    roadmap = payload.roadmap
+    if isinstance(roadmap, str):
+        try:
+            roadmap = json.loads(roadmap)
+        except Exception:
+            roadmap = {}
+    elif not isinstance(roadmap, dict):
+        roadmap = {}
+    pdf_bytes = generate_pathway_pdf_dossier(roadmap)
+    officer_id = roadmap.get("officer_id", "dossier")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -1020,7 +1028,18 @@ def pathway_chat_send(payload: ChatSendMessageInput, db: Session = Depends(get_d
     if not roadmap:
         off = db.scalar(select(Officer).where(Officer.id == payload.officer_id))
         if off and off.assigned_pathway:
-            roadmap = off.assigned_pathway
+            if isinstance(off.assigned_pathway, str):
+                try:
+                    roadmap = json.loads(off.assigned_pathway)
+                except Exception:
+                    roadmap = {}
+            elif isinstance(off.assigned_pathway, dict):
+                roadmap = off.assigned_pathway
+    elif isinstance(roadmap, str):
+        try:
+            roadmap = json.loads(roadmap)
+        except Exception:
+            roadmap = {}
 
     # 4. Execute conversation with advisor
     advisor_res = execute_grounded_conversation(
